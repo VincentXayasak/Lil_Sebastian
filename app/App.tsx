@@ -235,7 +235,7 @@ export default function App() {
       <View style={styles.safeTop} />
 
       <View style={styles.searchBar} accessibilityRole="search">
-        <Text style={styles.searchPlaceholder}>Search podcasts</Text>
+        <Text style={styles.searchPlaceholder}>Search city</Text>
       </View>
 
       <View style={styles.middleRow}>
@@ -281,7 +281,7 @@ export default function App() {
                   {item.title}
                 </Text>
                 {isLoadingRow ? (
-                  <ActivityIndicator size="small" color="#5c5349" />
+                  <ActivityIndicator size="small" color="#027525" />
                 ) : (
                   <Text style={styles.episodeAction}>{action}</Text>
                 )}
@@ -330,9 +330,9 @@ export default function App() {
               setScrubMillis(v);
             }}
             onSlidingComplete={onSlidingComplete}
-            minimumTrackTintColor="#2c2824"
-            maximumTrackTintColor="#e5e0d8"
-            thumbTintColor="#2c2824"
+            minimumTrackTintColor="#027525"
+            maximumTrackTintColor="#b8dfc4"
+            thumbTintColor="#027525"
             disabled={loadingEpisodeId != null || durationMillis <= 0}
           />
           <View style={styles.timeRow}>
@@ -354,7 +354,7 @@ export default function App() {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#f4f1ec',
+    backgroundColor: '#f0faf3',
     paddingHorizontal: 20,
     paddingBottom: 16,
   },
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e5e0d8',
+    borderColor: '#b8dfc4',
     justifyContent: 'center',
     paddingHorizontal: 16,
     shadowColor: '#000',
@@ -377,7 +377,7 @@ const styles = StyleSheet.create({
   },
   searchPlaceholder: {
     fontSize: 16,
-    color: '#9a9288',
+    color: '#6aaa82',
   },
   middleRow: {
     flexDirection: 'row',
@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e5e0d8',
+    borderColor: '#b8dfc4',
     padding: 14,
     justifyContent: 'flex-end',
     shadowColor: '#000',
@@ -402,7 +402,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 168,
     borderRadius: 16,
-    backgroundColor: '#2c2824',
+    backgroundColor: '#027525',
     padding: 16,
     justifyContent: 'flex-end',
     shadowColor: '#000',
@@ -416,7 +416,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.4,
     textTransform: 'uppercase',
-    color: '#8a8278',
+    color: '#5a9970',
     marginBottom: 6,
   },
   cityCardLabel: {
@@ -424,17 +424,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.4,
     textTransform: 'uppercase',
-    color: '#a39e96',
+    color: '#7db894',
     marginBottom: 6,
   },
   cityName: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#f4f1ec',
+    color: '#f0faf3',
   },
   cardHint: {
     fontSize: 14,
-    color: '#6b645c',
+    color: '#3d7a55',
     lineHeight: 20,
   },
   bottomPanel: {
@@ -443,7 +443,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e5e0d8',
+    borderColor: '#b8dfc4',
     padding: 18,
     paddingBottom: 12,
     shadowColor: '#000',
@@ -474,8 +474,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#ebe6df',
-    backgroundColor: '#faf8f5',
+    borderColor: '#c5e6d2',
+    backgroundColor: '#f5fcf8',
     marginBottom: 8,
     gap: 12,
   },
@@ -485,13 +485,13 @@ const styles = StyleSheet.create({
   episodeTitle: {
     flex: 1,
     fontSize: 15,
-    color: '#2c2824',
+    color: '#027525',
     fontWeight: '600',
   },
   episodeAction: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#5c5349',
+    color: '#016020',
   },
   listFooter: {
     height: 8,
@@ -501,7 +501,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e5e0d8',
+    borderColor: '#b8dfc4',
     padding: 16,
     paddingBottom: 14,
     shadowColor: '#000',
@@ -520,14 +520,14 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '700',
-    color: '#2c2824',
+    color: '#027525',
     lineHeight: 20,
   },
   closeBtn: {
     width: 32,
     height: 32,
     borderRadius: 10,
-    backgroundColor: '#f0ebe4',
+    backgroundColor: '#d4f0e0',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -536,7 +536,7 @@ const styles = StyleSheet.create({
   },
   closeBtnText: {
     fontSize: 16,
-    color: '#5c5349',
+    color: '#016020',
     fontWeight: '600',
   },
   slider: {
@@ -554,7 +554,7 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#8a8278',
+    color: '#5a9970',
     fontVariant: ['tabular-nums'],
   },
   playerPlayBtn: {
@@ -562,13 +562,13 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 40,
     borderRadius: 12,
-    backgroundColor: '#2c2824',
+    backgroundColor: '#027525',
   },
   playerPlayBtnPressed: {
     opacity: 0.92,
   },
   playerPlayBtnText: {
-    color: '#f4f1ec',
+    color: '#f0faf3',
     fontSize: 16,
     fontWeight: '700',
   },
