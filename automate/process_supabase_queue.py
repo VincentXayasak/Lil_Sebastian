@@ -11,13 +11,19 @@ Uses the Supabase **service role** key (never ship this to browsers). Configure 
   SUPABASE_UPLOADS_BUCKET=uploads
   SUPABASE_PODCASTS_BUCKET=podcasts
 
-Run once locally (pick first queued row):
+Run once (one queued row, then exit):
 
   python automate/process_supabase_queue.py --once
 
-Poll every 120s:
+Keep running forever (waits when idle; default 60s between scans):
+
+  python automate/process_supabase_queue.py
 
   python automate/process_supabase_queue.py --poll-seconds 120
+
+Use a process supervisor (launchd on macOS, systemd on Linux, ``screen``/tmux,
+or a small VPS) so the worker restarts after reboots — same idea as any job queue.
+Cron ``*/5 * * * * ... --once`` is another option.
 
 Requires ffmpeg and the same API keys `run_pipeline.py` needs (.env ElevenLabs, Gemini, …).
 """
@@ -124,6 +130,11 @@ def _upload_podcast(podcasts_bucket: str, sb: Client, storage_path: str, body: b
     )
 
 
+def _delete_source_mp4(sb: Client, uploads_bucket: str, source_storage_path: str) -> None:
+    """Remove the raw upload from Storage after the podcast is published."""
+    sb.storage.from_(uploads_bucket).remove([source_storage_path])
+
+
 def _invoke_local_pipeline(local_root: Path, work: Path) -> int:
     mp4_dir = work / "mp4"
     m4a_dir = work / "m4a"
@@ -218,7 +229,19 @@ def process_one_sb(
         _upload_podcast(podcasts_bucket, sb, dest, mp3_body)
         _finalize_done(sb, episode_id, dest)
 
-        print(f"Episode {episode_id} ready · podcasts/{dest}", flush=True)
+        try:
+            _delete_source_mp4(sb, uploads_bucket, source)
+            print(
+                f"Episode {episode_id} ready · podcasts/{dest} · removed uploads/{source}",
+                flush=True,
+            )
+        except Exception as del_exc:
+            print(
+                f"Warning: podcast saved but could not delete source video "
+                f"uploads/{source}: {del_exc}",
+                file=sys.stderr,
+            )
+            print(f"Episode {episode_id} ready · podcasts/{dest}", flush=True)
     except Exception as e:
         print(f"Episode {episode_id} failed: {e}", file=sys.stderr)
         _finalize_failed(sb, episode_id)
