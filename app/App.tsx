@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
   Platform,
   Pressable,
   StyleSheet,
@@ -234,8 +235,14 @@ export default function App() {
       <StatusBar style="dark" />
       <View style={styles.safeTop} />
 
+      <Image
+        source={require('./assets/sebastian.png')}
+        style={styles.logo}
+        resizeMode="contain"
+      />
+
       <View style={styles.searchBar} accessibilityRole="search">
-        <Text style={styles.searchPlaceholder}>Search city</Text>
+        <Text style={styles.searchPlaceholder}>Search podcasts</Text>
       </View>
 
       <View style={styles.middleRow}>
@@ -360,6 +367,13 @@ const styles = StyleSheet.create({
   },
   safeTop: {
     height: Platform.select({ ios: 52, android: 12, default: 12 }),
+  },
+  logo: {
+    width: 64,
+    height: 64,
+    marginBottom: 8,
+    alignSelf: 'flex-start',
+    borderRadius: 0,
   },
   searchBar: {
     height: 52,
