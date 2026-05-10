@@ -1,2 +1,0 @@
-Worked on downloading videos, converting from mp4 to m4a to save space and be 
-more efficient. Push m4a to Eleven Labs API to get transcript. Finished with the JSONL.

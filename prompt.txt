@@ -1,4 +1,0 @@
-We have mp3s that are not that large and not that many and want an app for users to listen to them like a podcast.
-I want to use supabase for the user sign ups and managing them. I want to use supabase to store the mp3 files and have the 
-app play the mp3 files when the podcast is chosen on the app. Just help me with setting up the supabase and what to do on the 
-supabase website and how to test and run it. 
