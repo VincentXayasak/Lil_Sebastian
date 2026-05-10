@@ -1,21 +1,28 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: #f0faf3;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
 }
 
 .page-content {
-  padding: 12px 20px 16px;
+  --edge: clamp(10px, 3.2vw, 28px);
+  padding: clamp(8px, 1.8vw, 14px) var(--edge) clamp(12px, 2.2vw, 20px);
   display: flex;
   flex-direction: column;
   flex: 1;
-  max-width: 640px;
-  margin: 0 auto;
   width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
 }
 
 .app-header {
@@ -119,16 +126,19 @@ body {
 }
 
 .middle-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: stretch;
-  margin-top: 20px;
-  gap: 14px;
+  margin-top: clamp(14px, 3vw, 20px);
+  gap: clamp(10px, 2vw, 14px);
+  min-width: 0;
 }
 
 .recent-square {
-  width: min(42vw, 168px);
-  height: min(42vw, 168px);
-  flex-shrink: 0;
+  width: 100%;
+  min-height: 168px;
+  height: 100%;
+  min-width: 0;
   border-radius: 16px;
   background: #fff;
   border: 1px solid #b8dfc4;
@@ -155,8 +165,9 @@ body {
 }
 
 .city-panel {
-  flex: 1;
+  min-width: 0;
   min-height: 168px;
+  height: 100%;
   border-radius: 16px;
   border: none;
   background: #027525;
@@ -227,9 +238,20 @@ body {
 }
 
 .city-name {
-  font-size: 22px;
+  font-size: clamp(17px, 4.2vw, 22px);
   font-weight: 700;
   color: #f0faf3;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 400px) {
+  .middle-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .recent-square {
+    min-height: 140px;
+  }
 }
 
 .card-label {
@@ -273,8 +295,11 @@ body {
   inset: 0;
   z-index: 2000;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+    max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  box-sizing: border-box;
 }
 
 .city-modal-backdrop {
@@ -288,13 +313,17 @@ body {
   z-index: 1;
   width: 100%;
   max-width: 520px;
-  max-height: min(92vh, 640px);
+  max-height: min(640px, 85vh);
   background: #fff;
-  border-radius: 18px 18px 0 0;
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.15);
+  border-radius: 18px;
+  box-shadow:
+    0 12px 48px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
   display: flex;
   flex-direction: column;
   padding: 14px 16px 24px;
+  /* flex child can shrink inside padded overlay */
+  min-height: 0;
 }
 
 .city-modal-header {
@@ -431,9 +460,9 @@ body {
 .episodes-real-list {
   flex: 1;
   margin-top: 8px;
-  margin-left: -6px;
-  margin-right: -6px;
+  min-height: 0;
   overflow-y: auto;
+  width: 100%;
 }
 
 .episode-play-row {
@@ -441,16 +470,16 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 10px;
+  padding: 12px max(10px, 1vw);
   border-radius: 10px;
   border: 1px solid #c5e6d2;
   background: #f5fcf8;
   margin-bottom: 8px;
-  margin-left: 6px;
-  margin-right: 6px;
   cursor: pointer;
   text-align: left;
-  width: calc(100% - 12px);
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
   font: inherit;
   transition: opacity 0.12s ease;
 }
@@ -478,10 +507,12 @@ body {
 
 .episode-play-title {
   flex: 1;
+  min-width: 0;
   font-size: 15px;
   font-weight: 600;
   color: #027525;
   line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .episode-play-action {
@@ -538,10 +569,12 @@ body {
 
 .listen-title {
   flex: 1;
+  min-width: 0;
   font-size: 15px;
   font-weight: 700;
   color: #027525;
   line-height: 1.33;
+  overflow-wrap: anywhere;
 }
 
 .listen-close {
