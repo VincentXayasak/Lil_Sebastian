@@ -9,3 +9,8 @@ Authentication → URL configuration (site URL) for your deployed site if you us
 Perfect! I want to show two different versions of the website. One version is if the user is signed out or hasn't signed in yet, then
 there is no "Upload Episode" button and no "Episode City" button. The other version, if the user is signed in, then these buttons will 
 be visible and usable. 
+
+--- GitHub Pages (Actions)
+1) Repo Settings → Pages → set Source to GitHub Actions (deploy uses .github/workflows/deploy-pages.yml).
+2) Settings → Secrets and variables → Actions → Repository secrets: SUPABASE_URL, SUPABASE_ANON_KEY (same as website/config.js locally or Supabase project settings API). Optional: PODCASTS_BUCKET, UPLOADS_BUCKET (default podcasts / uploads).
+3) Push to main or Actions → Deploy website to GitHub Pages → Run workflow. After first deploy, note the Pages URL for Supabase Auth → URL configuration.
