@@ -9,25 +9,21 @@ import {
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Slider from '@react-native-community/slider';
 import { cacheRemoteAudioForPlayback } from './lib/cacheRemoteAudio';
 import { createEpisodePlaybackUrl } from './lib/episodeSignedAudioUrl';
 import { supabase } from './lib/supabase';
 
 type EpisodeRow = {
-  id: string | number;
+  id: string;
   title: string;
-  storage_path: string | null;
-  status?: string | null;
+  storage_path: string;
 };
-
-function episodeIsPlayable(ep: EpisodeRow): boolean {
-  if (ep.status === 'failed') return false;
-  return !!ep.storage_path && ep.storage_path.replace(/^\/+/, '').length > 0;
-}
 
 function normalizeStoragePath(path: string): string {
   return path.replace(/^\/+/, '');
@@ -41,6 +37,9 @@ function formatTime(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+const RECENTS_KEY = 'lil_sebastian_recents';
+const MAX_RECENTS = 5;
+
 export default function App() {
   const { width } = useWindowDimensions();
   const squareSize = Math.min(width * 0.42, 168);
@@ -49,6 +48,8 @@ export default function App() {
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
+
+  const [recentEpisodes, setRecentEpisodes] = useState<EpisodeRow[]>([]);
 
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -62,6 +63,34 @@ export default function App() {
   const [scrubMillis, setScrubMillis] = useState(0);
   const isScrubbingRef = useRef(false);
   const wasPlayingBeforeScrubRef = useRef(false);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const isSearching = searchQuery.trim().length > 0;
+  const filteredEpisodes = isSearching
+    ? episodes.filter((ep) =>
+        ep.title.toLowerCase().includes(searchQuery.trim().toLowerCase())
+      )
+    : episodes;
+
+  // Load persisted recents on mount
+  useEffect(() => {
+    AsyncStorage.getItem(RECENTS_KEY).then((raw) => {
+      if (raw) {
+        try {
+          setRecentEpisodes(JSON.parse(raw) as EpisodeRow[]);
+        } catch {}
+      }
+    });
+  }, []);
+
+  const addToRecents = useCallback((episode: EpisodeRow) => {
+    setRecentEpisodes((prev) => {
+      const deduped = [episode, ...prev.filter((e) => e.id !== episode.id)];
+      const next = deduped.slice(0, MAX_RECENTS);
+      AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     isScrubbingRef.current = isScrubbing;
@@ -96,8 +125,8 @@ export default function App() {
       }
       const { data, error } = await supabase
         .from('episodes')
-        .select('id, title, storage_path, status')
-        .order('id', { ascending: false });
+        .select('id, title, storage_path')
+        .order('id', { ascending: true });
       if (cancelled) return;
       if (error) setListError(error.message);
       else setEpisodes((data ?? []) as EpisodeRow[]);
@@ -140,11 +169,7 @@ export default function App() {
   const loadAndPlayEpisode = useCallback(
     async (episode: EpisodeRow) => {
       setPlayError(null);
-      if (!episodeIsPlayable(episode)) {
-        setPlayError('This episode is still processing.');
-        return;
-      }
-      const path = normalizeStoragePath(episode.storage_path ?? '');
+      const path = normalizeStoragePath(episode.storage_path);
 
       try {
         if (soundRef.current) {
@@ -153,10 +178,9 @@ export default function App() {
           setSound(null);
         }
 
-        const rowId = String(episode.id);
-        setLoadingEpisodeId(rowId);
+        setLoadingEpisodeId(episode.id);
         const signedUrl = await createEpisodePlaybackUrl(path);
-        const localUri = await cacheRemoteAudioForPlayback(signedUrl, rowId);
+        const localUri = await cacheRemoteAudioForPlayback(signedUrl, episode.id);
 
         const { sound: next } = await Audio.Sound.createAsync(
           { uri: localUri },
@@ -173,6 +197,7 @@ export default function App() {
         setSound(next);
         setActiveEpisode(episode);
         setLoadingEpisodeId(null);
+        addToRecents(episode);
       } catch (e) {
         setLoadingEpisodeId(null);
         const msg = e instanceof Error ? e.message : String(e);
@@ -183,16 +208,14 @@ export default function App() {
         await unloadPlayer();
       }
     },
-    [attachPlaybackWatcher, unloadPlayer]
+    [attachPlaybackWatcher, unloadPlayer, addToRecents]
   );
 
   const toggleEpisode = useCallback(
     async (episode: EpisodeRow) => {
-      if (!episodeIsPlayable(episode)) return;
-
       const currentSound = soundRef.current;
 
-      if (activeEpisode != null && String(activeEpisode.id) === String(episode.id) && currentSound) {
+      if (activeEpisode?.id === episode.id && currentSound) {
         try {
           const st = await currentSound.getStatusAsync();
           if (!st.isLoaded) return;
@@ -254,74 +277,150 @@ export default function App() {
         resizeMode="contain"
       />
 
-      <View style={styles.searchBar} accessibilityRole="search">
-        <Text style={styles.searchPlaceholder}>Search podcasts</Text>
-      </View>
-
-      <View style={styles.middleRow}>
-        <View style={[styles.recentSquare, { width: squareSize, height: squareSize }]}>
-          <Text style={styles.cardLabel}>Recently listened</Text>
-          <Text style={styles.cardHint}>Podcast art / title</Text>
-        </View>
-
-        <View style={styles.cityPanel}>
-          <Text style={styles.cityCardLabel}>Subscribed city</Text>
-          <Text style={styles.cityName}>Your city</Text>
-        </View>
-      </View>
-
-      <View style={styles.bottomPanel}>
-        <Text style={styles.cardLabel}>Episodes</Text>
-        {playError != null && playError !== '' ? <Text style={styles.errorText}>{playError}</Text> : null}
-        {listLoading && <ActivityIndicator style={styles.loader} />}
-        {listError != null && listError !== '' ? (
-          <Text style={styles.errorText}>{listError}</Text>
-        ) : null}
-        {!listLoading && !listError && episodes.length === 0 ? (
-          <Text style={styles.cardHint}>No episodes in the database yet.</Text>
-        ) : null}
-
-        <FlatList
-          style={styles.episodeList}
-          data={episodes}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => {
-            const playable = episodeIsPlayable(item);
-            const isActive =
-              sound != null &&
-              activeEpisode != null &&
-              loadingEpisodeId == null &&
-              String(activeEpisode.id) === String(item.id);
-            const isLoadingRow = loadingEpisodeId === String(item.id);
-            let action = 'Play';
-            if (!playable && item.status === 'failed') action = 'Failed';
-            else if (!playable) action = 'Processing';
-            else if (isLoadingRow) action = '…';
-            else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
-            return (
-              <Pressable
-                style={({ pressed }) => [
-                  styles.episodeRow,
-                  !playable && styles.episodeRowDisabled,
-                  pressed && playable && styles.episodeRowPressed,
-                ]}
-                onPress={() => void toggleEpisode(item)}
-                disabled={isLoadingRow || !playable}
-              >
-                <Text style={styles.episodeTitle} numberOfLines={2}>
-                  {item.title}
-                </Text>
-                {isLoadingRow ? (
-                  <ActivityIndicator size="small" color="#027525" />
-                ) : (
-                  <Text style={styles.episodeAction}>{action}</Text>
-                )}
-              </Pressable>
-            );
-          }}
-          ListFooterComponent={<View style={styles.listFooter} />}
+      <View style={styles.searchBar}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search podcasts"
+          placeholderTextColor="#6aaa82"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+          autoCorrect={false}
+          autoCapitalize="none"
+          accessibilityLabel="Search podcasts"
         />
+        {isSearching && Platform.OS !== 'ios' && (
+          <Pressable
+            onPress={() => setSearchQuery('')}
+            hitSlop={8}
+            style={styles.clearBtn}
+          >
+            <Text style={styles.clearBtnText}>✕</Text>
+          </Pressable>
+        )}
       </View>
+
+      {/* ── SEARCH RESULTS VIEW ── */}
+      {isSearching ? (
+        <View style={styles.resultsPanel}>
+          <Text style={styles.resultsHeader}>
+            {filteredEpisodes.length === 0
+              ? `No results for "${searchQuery.trim()}"`
+              : `${filteredEpisodes.length} result${filteredEpisodes.length !== 1 ? 's' : ''}`}
+          </Text>
+          {filteredEpisodes.length === 0 ? (
+            <Text style={styles.cardHint}>Try a different keyword.</Text>
+          ) : (
+            <FlatList
+              style={styles.episodeList}
+              data={filteredEpisodes}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
+                const isLoadingRow = loadingEpisodeId === item.id;
+                let action = 'Play';
+                if (isLoadingRow) action = '…';
+                else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
+                return (
+                  <Pressable
+                    style={({ pressed }) => [styles.episodeRow, pressed && styles.episodeRowPressed]}
+                    onPress={() => void toggleEpisode(item)}
+                    disabled={isLoadingRow}
+                  >
+                    <Text style={styles.episodeTitle} numberOfLines={2}>{item.title}</Text>
+                    {isLoadingRow
+                      ? <ActivityIndicator size="small" color="#027525" />
+                      : <Text style={styles.episodeAction}>{action}</Text>}
+                  </Pressable>
+                );
+              }}
+              ListFooterComponent={<View style={styles.listFooter} />}
+            />
+          )}
+        </View>
+      ) : (
+        /* ── HOME VIEW ── */
+        <>
+          <View style={styles.middleRow}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.recentSquare,
+                { width: squareSize, height: squareSize },
+                pressed && recentEpisodes.length > 0 && styles.episodeRowPressed,
+              ]}
+              onPress={() => {
+                if (recentEpisodes.length > 0) void toggleEpisode(recentEpisodes[0]);
+              }}
+              disabled={recentEpisodes.length === 0}
+            >
+              {recentEpisodes.length > 0 ? (
+                <>
+                  <Text style={styles.cardLabel}>Recently played</Text>
+                  <Text style={styles.recentTitle} numberOfLines={3}>
+                    {recentEpisodes[0].title}
+                  </Text>
+                  <Text style={styles.recentHint}>
+                    {activeEpisode?.id === recentEpisodes[0].id && isPlaying ? '▶ Playing' : 'Tap to play'}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.cardLabel}>Recently played</Text>
+                  <Text style={styles.cardHint}>Nothing yet</Text>
+                </>
+              )}
+            </Pressable>
+
+            <View style={styles.cityPanel}>
+              <Text style={styles.cityCardLabel}>Subscribed city</Text>
+              <Text style={styles.cityName}>Your city</Text>
+            </View>
+          </View>
+
+          <View style={styles.bottomPanel}>
+            <Text style={styles.cardLabel}>Episodes</Text>
+            {playError != null && playError !== '' ? <Text style={styles.errorText}>{playError}</Text> : null}
+            {listLoading && <ActivityIndicator style={styles.loader} />}
+            {listError != null && listError !== '' ? (
+              <Text style={styles.errorText}>{listError}</Text>
+            ) : null}
+            {!listLoading && !listError && episodes.length === 0 ? (
+              <Text style={styles.cardHint}>No episodes in the database yet.</Text>
+            ) : null}
+
+            <FlatList
+              style={styles.episodeList}
+              data={episodes}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
+                const isLoadingRow = loadingEpisodeId === item.id;
+                let action = 'Play';
+                if (isLoadingRow) action = '…';
+                else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
+                return (
+                  <Pressable
+                    style={({ pressed }) => [styles.episodeRow, pressed && styles.episodeRowPressed]}
+                    onPress={() => void toggleEpisode(item)}
+                    disabled={isLoadingRow}
+                  >
+                    <Text style={styles.episodeTitle} numberOfLines={2}>
+                      {item.title}
+                    </Text>
+                    {isLoadingRow
+                      ? <ActivityIndicator size="small" color="#027525" />
+                      : <Text style={styles.episodeAction}>{action}</Text>}
+                  </Pressable>
+                );
+              }}
+              ListFooterComponent={<View style={styles.listFooter} />}
+            />
+          </View>
+        </>
+      )}
 
       {activeEpisode != null && sound != null && (
         <View style={styles.playerBar}>
@@ -338,7 +437,7 @@ export default function App() {
             </Pressable>
           </View>
           <Slider
-            key={`slider-${String(activeEpisode.id)}`}
+            key={`slider-${activeEpisode.id}`}
             style={styles.slider}
             minimumValue={0}
             maximumValue={sliderMax}
@@ -400,12 +499,13 @@ const styles = StyleSheet.create({
     borderRadius: 0,
   },
   searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
     height: 52,
     borderRadius: 14,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#b8dfc4',
-    justifyContent: 'center',
     paddingHorizontal: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -413,9 +513,32 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  searchPlaceholder: {
+  searchInput: {
+    flex: 1,
     fontSize: 16,
+    color: '#027525',
+    paddingVertical: 0,
+  },
+  clearBtn: {
+    paddingLeft: 8,
+    paddingVertical: 4,
+  },
+  clearBtnText: {
+    fontSize: 15,
     color: '#6aaa82',
+    fontWeight: '600',
+  },
+  resultsPanel: {
+    flex: 1,
+    marginTop: 16,
+  },
+  resultsHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#5a9970',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 10,
   },
   middleRow: {
     flexDirection: 'row',
@@ -475,6 +598,20 @@ const styles = StyleSheet.create({
     color: '#3d7a55',
     lineHeight: 20,
   },
+  recentTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#027525',
+    lineHeight: 19,
+    marginBottom: 4,
+  },
+  recentHint: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6aaa82',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
   bottomPanel: {
     flex: 1,
     marginTop: 20,
@@ -519,11 +656,6 @@ const styles = StyleSheet.create({
   },
   episodeRowPressed: {
     opacity: 0.85,
-  },
-  episodeRowDisabled: {
-    opacity: 0.7,
-    borderColor: '#d5ddd8',
-    backgroundColor: '#f5f7f6',
   },
   episodeTitle: {
     flex: 1,
