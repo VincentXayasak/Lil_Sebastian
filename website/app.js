@@ -76,21 +76,119 @@ clearBtn.addEventListener('click', () => {
   showView('home');
 });
 
+function createLilSebastianSupabase() {
+  const cfg = window.LIL_SEBASTIAN_CONFIG || {};
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+    return { client: null, cfg, setupError: 'Add supabaseUrl and supabaseAnonKey to config.' };
+  }
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
+    return { client: null, cfg, setupError: 'Supabase script failed to load.' };
+  }
+  const client = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+  return { client, cfg, setupError: null };
+}
+
+function safeIncomingObjectName(originalName) {
+  const leaf = String(originalName || '').replace(/^.*[/\\]/, '');
+  const cleaned = leaf.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^\.+|\.+$/g, '');
+  const extOk = /\.(mp4|m4v|mov|webm)$/i.test(cleaned) ? cleaned : cleaned + '.mp4';
+  return extOk.slice(0, 180) || 'video.mp4';
+}
+
+function episodeTitleFromFileName(originalName) {
+  const leaf = String(originalName || '').replace(/^.*[/\\]/, '');
+  const noExt = leaf.replace(/\.[^.]+$/i, '');
+  const spaced = noExt.replace(/_/g, ' ').trim();
+  return spaced.slice(0, 500) || 'New episode';
+}
+
+function episodeHasPlayableAudio(ep) {
+  if (!ep || ep.status === 'failed') return false;
+  return !!String(ep.storage_path || '').trim();
+}
+
 /* Upload */
 const uploadBlock = document.getElementById('upload-block');
 const fileInput   = document.getElementById('file-input');
 const uploadLabel = document.getElementById('upload-label');
 const uploadHint  = document.getElementById('upload-hint');
 
-uploadBlock.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', () => {
+let uploadInFlight = false;
+
+uploadBlock.addEventListener('click', () => {
+  if (uploadInFlight) return;
+  fileInput.click();
+});
+
+fileInput.addEventListener('change', async () => {
   const file = fileInput.files[0];
   if (!file) return;
+
   const mb = (file.size / (1024 * 1024)).toFixed(1);
-  uploadLabel.textContent = 'Ready to upload';
-  uploadHint.textContent  = file.name + ' · ' + mb + ' MB';
+  uploadLabel.textContent = 'Sending…';
+  uploadHint.textContent = file.name + ' · ' + mb + ' MB';
+  uploadBlock.style.borderColor = '';
+  uploadBlock.style.background = '';
+
+  const { client: sb, cfg, setupError } = createLilSebastianSupabase();
+  if (setupError) {
+    uploadLabel.textContent = 'Cannot upload';
+    uploadHint.textContent = setupError;
+    fileInput.value = '';
+    return;
+  }
+
+  const bucket = cfg.uploadsBucket || 'uploads';
+  const idPart =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : String(Date.now());
+  const objectPath = 'incoming/' + idPart + '_' + safeIncomingObjectName(file.name);
+
+  uploadInFlight = true;
+  uploadBlock.disabled = true;
+
+  const { error } = await sb.storage.from(bucket).upload(objectPath, file, {
+    cacheControl: '3600',
+    upsert: false,
+    contentType: file.type || 'video/mp4',
+  });
+
+  uploadInFlight = false;
+  uploadBlock.disabled = false;
+  fileInput.value = '';
+
+  if (error) {
+    uploadLabel.textContent = 'Upload failed';
+    uploadHint.textContent = error.message;
+    uploadBlock.style.borderColor = '#b00020';
+    uploadBlock.style.background = '#fff5f5';
+    return;
+  }
+
+  const title = episodeTitleFromFileName(file.name);
+  const { error: rowError } = await sb.from('episodes').insert({
+    title: title,
+    source_video_storage_path: objectPath,
+    status: 'processing',
+    storage_path: null,
+  });
+
+  if (rowError) {
+    uploadLabel.textContent = 'Uploaded (DB error)';
+    uploadHint.textContent =
+      'Saved to ' + bucket + '/' + objectPath + ' · ' + rowError.message + ' Run supabase_sql/episodes_processing.sql if needed.';
+    uploadBlock.style.borderColor = '#b8860b';
+    uploadBlock.style.background = '#fffbf0';
+    return;
+  }
+
+  uploadLabel.textContent = 'Uploaded';
+  uploadHint.textContent = 'Queued · ' + title;
   uploadBlock.style.borderColor = '#027525';
-  uploadBlock.style.background  = '#f0faf3';
+  uploadBlock.style.background = '#f0faf3';
+
+  document.dispatchEvent(new CustomEvent('lil-sebastian-episodes-refresh'));
 });
 
 (function lilSebastianListen() {
@@ -125,22 +223,19 @@ fileInput.addEventListener('change', () => {
   }
 
   async function fetchEpisodesTable() {
-    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+    const created = createLilSebastianSupabase();
+    if (created.setupError) {
       configHint.hidden = false;
       statusEl.textContent = '';
       return;
     }
     configHint.hidden = true;
-    if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
-      statusEl.textContent = 'Could not load the Supabase script.';
-      return;
-    }
-    sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+    sb = created.client;
     statusEl.textContent = 'Loading episodes…';
     const { data, error } = await sb
       .from('episodes')
-      .select('id,title,storage_path')
-      .order('id', { ascending: true });
+      .select('id,title,storage_path,status,source_video_storage_path')
+      .order('id', { ascending: false });
     if (error) {
       statusEl.textContent = 'Could not load episodes: ' + error.message;
       return;
@@ -156,6 +251,11 @@ fileInput.addEventListener('change', () => {
       const ep = episodes[i];
       const act = btn.querySelector('.episode-play-action');
       if (!ep || !act) return;
+      if (!episodeHasPlayableAudio(ep)) {
+        act.textContent = ep.status === 'failed' ? 'Failed' : 'Processing';
+        btn.classList.remove('is-active');
+        return;
+      }
       const isActive = currentEpisode && currentEpisode.id === ep.id;
       btn.classList.toggle('is-active', !!isActive);
       if (!isActive) act.textContent = 'Play';
@@ -182,6 +282,8 @@ fileInput.addEventListener('change', () => {
       const btn = rows[i];
       const titleSpan = btn.querySelector('.episode-play-title');
       if (titleSpan) titleSpan.textContent = ep.title;
+      btn.disabled = !episodeHasPlayableAudio(ep);
+      btn.classList.toggle('is-failed', ep.status === 'failed');
       btn.addEventListener('click', () => onEpisodeRowClick(ep));
     });
     updateRowButtons();
@@ -242,6 +344,15 @@ fileInput.addEventListener('change', () => {
   async function onEpisodeRowClick(ep) {
     if (!sb) await fetchEpisodesTable();
     if (!sb) return;
+    if (ep.status === 'failed') {
+      statusEl.textContent = 'This episode failed during processing.';
+      return;
+    }
+    if (!episodeHasPlayableAudio(ep)) {
+      statusEl.textContent =
+        ep.status === 'processing' ? 'Still processing — check back once the podcast is generated.' : 'No audio yet for this episode.';
+      return;
+    }
     try {
       if (currentEpisode && currentEpisode.id === ep.id) {
         const dur = audioEl.duration;
@@ -314,6 +425,10 @@ fileInput.addEventListener('change', () => {
     tCur.textContent = '0:00';
     tDur.textContent = '0:00';
     scrub.value = '0';
+  });
+
+  document.addEventListener('lil-sebastian-episodes-refresh', () => {
+    void fetchEpisodesTable();
   });
 
   fetchEpisodesTable();

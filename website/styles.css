@@ -344,6 +344,22 @@ body {
 .episode-play-row:hover { border-color: #027525; background: #f7fbf8; }
 .episode-play-row:active { opacity: 0.92; }
 .episode-play-row.is-active { border-color: #027525; background: #f0faf3; }
+.episode-play-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.78;
+  border-color: #d5ddd8;
+  background: #f5f7f6;
+}
+.episode-play-row:disabled:hover {
+  border-color: #d5ddd8;
+  background: #f5f7f6;
+}
+.episode-play-row.is-failed:disabled {
+  border-color: #e8c9c9;
+  background: #fff8f8;
+}
+.episode-play-row:disabled .episode-play-action { color: #6b7f72; }
+.episode-play-row.is-failed:disabled .episode-play-action { color: #a33; }
 .episode-play-icon {
   width: 42px;
   height: 42px;

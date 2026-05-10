@@ -17,10 +17,16 @@ import { createEpisodePlaybackUrl } from './lib/episodeSignedAudioUrl';
 import { supabase } from './lib/supabase';
 
 type EpisodeRow = {
-  id: string;
+  id: string | number;
   title: string;
-  storage_path: string;
+  storage_path: string | null;
+  status?: string | null;
 };
+
+function episodeIsPlayable(ep: EpisodeRow): boolean {
+  if (ep.status === 'failed') return false;
+  return !!ep.storage_path && ep.storage_path.replace(/^\/+/, '').length > 0;
+}
 
 function normalizeStoragePath(path: string): string {
   return path.replace(/^\/+/, '');
@@ -89,8 +95,8 @@ export default function App() {
       }
       const { data, error } = await supabase
         .from('episodes')
-        .select('id, title, storage_path')
-        .order('id', { ascending: true });
+        .select('id, title, storage_path, status')
+        .order('id', { ascending: false });
       if (cancelled) return;
       if (error) setListError(error.message);
       else setEpisodes((data ?? []) as EpisodeRow[]);
@@ -133,7 +139,11 @@ export default function App() {
   const loadAndPlayEpisode = useCallback(
     async (episode: EpisodeRow) => {
       setPlayError(null);
-      const path = normalizeStoragePath(episode.storage_path);
+      if (!episodeIsPlayable(episode)) {
+        setPlayError('This episode is still processing.');
+        return;
+      }
+      const path = normalizeStoragePath(episode.storage_path ?? '');
 
       try {
         if (soundRef.current) {
@@ -142,9 +152,10 @@ export default function App() {
           setSound(null);
         }
 
-        setLoadingEpisodeId(episode.id);
+        const rowId = String(episode.id);
+        setLoadingEpisodeId(rowId);
         const signedUrl = await createEpisodePlaybackUrl(path);
-        const localUri = await cacheRemoteAudioForPlayback(signedUrl, episode.id);
+        const localUri = await cacheRemoteAudioForPlayback(signedUrl, rowId);
 
         const { sound: next } = await Audio.Sound.createAsync(
           { uri: localUri },
@@ -176,9 +187,11 @@ export default function App() {
 
   const toggleEpisode = useCallback(
     async (episode: EpisodeRow) => {
+      if (!episodeIsPlayable(episode)) return;
+
       const currentSound = soundRef.current;
 
-      if (activeEpisode?.id === episode.id && currentSound) {
+      if (activeEpisode != null && String(activeEpisode.id) === String(episode.id) && currentSound) {
         try {
           const st = await currentSound.getStatusAsync();
           if (!st.isLoaded) return;
@@ -264,18 +277,29 @@ export default function App() {
         <FlatList
           style={styles.episodeList}
           data={episodes}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => String(item.id)}
           renderItem={({ item }) => {
-            const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
-            const isLoadingRow = loadingEpisodeId === item.id;
+            const playable = episodeIsPlayable(item);
+            const isActive =
+              sound != null &&
+              activeEpisode != null &&
+              loadingEpisodeId == null &&
+              String(activeEpisode.id) === String(item.id);
+            const isLoadingRow = loadingEpisodeId === String(item.id);
             let action = 'Play';
-            if (isLoadingRow) action = '…';
+            if (!playable && item.status === 'failed') action = 'Failed';
+            else if (!playable) action = 'Processing';
+            else if (isLoadingRow) action = '…';
             else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
             return (
               <Pressable
-                style={({ pressed }) => [styles.episodeRow, pressed && styles.episodeRowPressed]}
+                style={({ pressed }) => [
+                  styles.episodeRow,
+                  !playable && styles.episodeRowDisabled,
+                  pressed && playable && styles.episodeRowPressed,
+                ]}
                 onPress={() => void toggleEpisode(item)}
-                disabled={isLoadingRow}
+                disabled={isLoadingRow || !playable}
               >
                 <Text style={styles.episodeTitle} numberOfLines={2}>
                   {item.title}
@@ -307,7 +331,7 @@ export default function App() {
             </Pressable>
           </View>
           <Slider
-            key={`slider-${activeEpisode.id}`}
+            key={`slider-${String(activeEpisode.id)}`}
             style={styles.slider}
             minimumValue={0}
             maximumValue={sliderMax}
@@ -481,6 +505,11 @@ const styles = StyleSheet.create({
   },
   episodeRowPressed: {
     opacity: 0.85,
+  },
+  episodeRowDisabled: {
+    opacity: 0.7,
+    borderColor: '#d5ddd8',
+    backgroundColor: '#f5f7f6',
   },
   episodeTitle: {
     flex: 1,

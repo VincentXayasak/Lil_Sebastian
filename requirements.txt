@@ -2,3 +2,4 @@ elevenlabs>=2.34.0
 python-dotenv>=1.0.0
 certifi>=2024.0.0
 pydub>=0.25.1
+supabase>=2.24.0
