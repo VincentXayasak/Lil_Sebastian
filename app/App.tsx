@@ -1,26 +1,47 @@
 import { Audio, type AVPlaybackStatus } from 'expo-av';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Slider from '@react-native-community/slider';
+import LOCATION_JSON from './data/locations.json';
 import { cacheRemoteAudioForPlayback } from './lib/cacheRemoteAudio';
 import { createEpisodePlaybackUrl } from './lib/episodeSignedAudioUrl';
 import { supabase } from './lib/supabase';
+
+const LOCATION_LIST = LOCATION_JSON as string[];
+
+const RECENTS_KEY = 'lil_sebastian_recents';
+const SUBSCRIBED_CITY_KEY = 'lil_sebastian_subscribed_city';
+const MAX_RECENTS = 5;
 
 type EpisodeRow = {
   id: string | number;
   title: string;
   storage_path: string | null;
+  location?: string | null;
   status?: string | null;
+};
+
+/** Minimal row persisted for Recently played — matches web localStorage shape. */
+type RecentEpisode = {
+  id: string | number;
+  title: string;
+  storage_path: string | null;
+  location?: string | null;
 };
 
 function episodeIsPlayable(ep: EpisodeRow): boolean {
@@ -40,18 +61,36 @@ function formatTime(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+function normalizeRecentPayload(ep: EpisodeRow): RecentEpisode {
+  return {
+    id: ep.id,
+    title: ep.title,
+    storage_path: ep.storage_path,
+    location: ep.location,
+  };
+}
+
 export default function App() {
   const { width } = useWindowDimensions();
   const squareSize = Math.min(width * 0.42, 168);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const isSearching = searchQuery.trim().length > 0;
 
   const [episodes, setEpisodes] = useState<EpisodeRow[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
 
+  const [subscribedCity, setSubscribedCity] = useState<string | null>(null);
+  const [subscribedHydrated, setSubscribedHydrated] = useState(false);
+  const [cityModalVisible, setCityModalVisible] = useState(false);
+  const [citySearch, setCitySearch] = useState('');
+
+  const [recentEpisodes, setRecentEpisodes] = useState<RecentEpisode[]>([]);
+
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
-  /** Episode currently loaded in memory (play or paused). */
   const [activeEpisode, setActiveEpisode] = useState<EpisodeRow | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [positionMillis, setPositionMillis] = useState(0);
@@ -61,6 +100,39 @@ export default function App() {
   const [scrubMillis, setScrubMillis] = useState(0);
   const isScrubbingRef = useRef(false);
   const wasPlayingBeforeScrubRef = useRef(false);
+
+  const cityPickerMatches = useMemo(() => {
+    const q = citySearch.trim().toLowerCase();
+    if (!q.length) return LOCATION_LIST.slice(0, 100);
+    return LOCATION_LIST.filter((loc) => loc.toLowerCase().includes(q)).slice(0, 150);
+  }, [citySearch]);
+
+  const filteredForSearch = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q.length) return episodes;
+    return episodes.filter((ep) => ep.title.toLowerCase().includes(q));
+  }, [episodes, searchQuery]);
+
+  const pickSubscribedCity = useCallback(async (loc: string) => {
+    const v = loc.trim();
+    if (!v.length) return;
+    setSubscribedCity(v);
+    await AsyncStorage.setItem(SUBSCRIBED_CITY_KEY, v);
+    setCityModalVisible(false);
+    setCitySearch('');
+  }, []);
+
+  const addToRecents = useCallback((episode: EpisodeRow) => {
+    const row = normalizeRecentPayload(episode);
+    setRecentEpisodes((prev) => {
+      const deduped = [
+        row,
+        ...prev.filter((e) => String(e.id) !== String(row.id)),
+      ].slice(0, MAX_RECENTS);
+      void AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(deduped));
+      return deduped;
+    });
+  }, []);
 
   useEffect(() => {
     isScrubbingRef.current = isScrubbing;
@@ -74,7 +146,6 @@ export default function App() {
     void Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
       shouldDuckAndroid: true,
-      // Keep audio alive when the screen locks or the app goes to background
       staysActiveInBackground: true,
     });
   }, []);
@@ -87,17 +158,52 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void AsyncStorage.getItem(SUBSCRIBED_CITY_KEY).then((raw) => {
+      const t = raw?.trim() || '';
+      setSubscribedCity(t.length ? t : null);
+      setSubscribedHydrated(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    void AsyncStorage.getItem(RECENTS_KEY).then((raw) => {
+      if (!raw) return;
+      try {
+        const parsed = JSON.parse(raw) as RecentEpisode[];
+        setRecentEpisodes(Array.isArray(parsed) ? parsed : []);
+      } catch {
+        /* ignore */
+      }
+    });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!process.env.EXPO_PUBLIC_SUPABASE_URL?.length) {
-        setListError('Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to app/.env');
+        setListError(
+          'Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_ANON_KEY to app/.env'
+        );
         setListLoading(false);
         return;
       }
+      if (!subscribedHydrated) return;
+
+      if (!subscribedCity) {
+        setEpisodes([]);
+        setListError(null);
+        setListLoading(false);
+        return;
+      }
+
+      setListLoading(true);
+      setListError(null);
       const { data, error } = await supabase
         .from('episodes')
-        .select('id, title, storage_path, status')
-        .order('id', { ascending: false });
+        .select('id, title, storage_path, status, location')
+        .eq('location', subscribedCity)
+        .order('id', { ascending: true });
+
       if (cancelled) return;
       if (error) setListError(error.message);
       else setEpisodes((data ?? []) as EpisodeRow[]);
@@ -106,7 +212,13 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [subscribedHydrated, subscribedCity]);
+
+  function resolveEpisodeRef(ref: RecentEpisode | null): EpisodeRow | null {
+    if (!ref) return null;
+    const live = episodes.find((e) => String(e.id) === String(ref.id));
+    return live ?? (ref as EpisodeRow);
+  }
 
   const unloadPlayer = useCallback(async () => {
     const current = soundRef.current;
@@ -141,7 +253,6 @@ export default function App() {
     async (episode: EpisodeRow) => {
       setPlayError(null);
       if (!episodeIsPlayable(episode)) {
-        setPlayError('This episode is still processing.');
         return;
       }
       const path = normalizeStoragePath(episode.storage_path ?? '');
@@ -173,6 +284,7 @@ export default function App() {
         setSound(next);
         setActiveEpisode(episode);
         setLoadingEpisodeId(null);
+        addToRecents(episode);
       } catch (e) {
         setLoadingEpisodeId(null);
         const msg = e instanceof Error ? e.message : String(e);
@@ -183,7 +295,7 @@ export default function App() {
         await unloadPlayer();
       }
     },
-    [attachPlaybackWatcher, unloadPlayer]
+    [attachPlaybackWatcher, unloadPlayer, addToRecents]
   );
 
   const toggleEpisode = useCallback(
@@ -192,7 +304,11 @@ export default function App() {
 
       const currentSound = soundRef.current;
 
-      if (activeEpisode != null && String(activeEpisode.id) === String(episode.id) && currentSound) {
+      if (
+        activeEpisode != null &&
+        String(activeEpisode.id) === String(episode.id) &&
+        currentSound
+      ) {
         try {
           const st = await currentSound.getStatusAsync();
           if (!st.isLoaded) return;
@@ -241,81 +357,206 @@ export default function App() {
 
   const sliderMax = durationMillis > 0 ? durationMillis : 1;
   const sliderValue =
-    durationMillis <= 0 ? 0 : isScrubbing ? Math.min(Math.max(scrubMillis, 0), sliderMax) : positionMillis;
+    durationMillis <= 0
+      ? 0
+      : isScrubbing
+        ? Math.min(Math.max(scrubMillis, 0), sliderMax)
+        : positionMillis;
+
+  const renderEpisodeRow = (item: EpisodeRow) => {
+    const playable = episodeIsPlayable(item);
+    const isActive =
+      sound != null &&
+      activeEpisode != null &&
+      loadingEpisodeId == null &&
+      String(activeEpisode.id) === String(item.id);
+    const isLoadingRow = loadingEpisodeId === String(item.id);
+    let action = 'Play';
+    if (!playable && item.status === 'failed') action = 'Failed';
+    else if (!playable) action = 'Processing';
+    else if (isLoadingRow) action = '…';
+    else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
+    return (
+      <Pressable
+        style={({ pressed }) => [
+          styles.episodeRow,
+          !playable && styles.episodeRowDisabled,
+          pressed && playable && styles.episodeRowPressed,
+        ]}
+        onPress={() => void toggleEpisode(item)}
+        disabled={isLoadingRow || !playable}
+      >
+        <Text style={styles.episodeTitle} numberOfLines={2}>
+          {item.title}
+        </Text>
+        {isLoadingRow ? (
+          <ActivityIndicator size="small" color="#027525" />
+        ) : (
+          <Text style={styles.episodeAction}>{action}</Text>
+        )}
+      </Pressable>
+    );
+  };
+
+  const recentFirst = recentEpisodes[0];
+  const recentResolved = resolveEpisodeRef(recentFirst ?? null);
+  const recentCanPlay = !!(recentResolved && episodeIsPlayable(recentResolved));
+  const playingRecent =
+    !!(
+      activeEpisode &&
+      recentResolved &&
+      String(activeEpisode.id) === String(recentResolved.id) &&
+      isPlaying
+    );
 
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
       <View style={styles.safeTop} />
 
-      <View style={styles.searchBar} accessibilityRole="search">
-        <Text style={styles.searchPlaceholder}>Search city</Text>
+      <Image
+        source={require('./assets/sebastian.png')}
+        style={styles.logo}
+        accessibilityLabel="Lil Sebastian"
+        resizeMode="contain"
+      />
+
+      <View style={styles.searchBar}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search podcasts"
+          placeholderTextColor="#6aaa82"
+          value={searchQuery}
+          onChangeText={(t) => {
+            setPlayError(null);
+            setSearchQuery(t);
+          }}
+          returnKeyType="search"
+          clearButtonMode="while-editing"
+          autoCorrect={false}
+          autoCapitalize="none"
+          accessibilityLabel="Search podcasts"
+        />
+        {isSearching && Platform.OS !== 'ios' && (
+          <Pressable onPress={() => setSearchQuery('')} hitSlop={8} style={styles.clearBtn}>
+            <Text style={styles.clearBtnText}>✕</Text>
+          </Pressable>
+        )}
       </View>
 
-      <View style={styles.middleRow}>
-        <View style={[styles.recentSquare, { width: squareSize, height: squareSize }]}>
-          <Text style={styles.cardLabel}>Recently listened</Text>
-          <Text style={styles.cardHint}>Podcast art / title</Text>
+      {isSearching ? (
+        <View style={styles.resultsPanel}>
+          <Text style={styles.resultsHeader}>
+            {filteredForSearch.length === 0
+              ? `No results for "${searchQuery.trim()}"`
+              : `${filteredForSearch.length} result${filteredForSearch.length !== 1 ? 's' : ''}`}
+          </Text>
+          {filteredForSearch.length === 0 ? (
+            <Text style={styles.cardHint}>Try a different keyword.</Text>
+          ) : (
+            <FlatList
+              style={styles.episodeList}
+              data={filteredForSearch}
+              keyExtractor={(it) => String(it.id)}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => renderEpisodeRow(item)}
+              ListFooterComponent={<View style={styles.listFooter} />}
+            />
+          )}
+          {listError ? <Text style={styles.errorText}>{listError}</Text> : null}
         </View>
-
-        <View style={styles.cityPanel}>
-          <Text style={styles.cityCardLabel}>Subscribed city</Text>
-          <Text style={styles.cityName}>Your city</Text>
-        </View>
-      </View>
-
-      <View style={styles.bottomPanel}>
-        <Text style={styles.cardLabel}>Episodes</Text>
-        {playError != null && playError !== '' ? <Text style={styles.errorText}>{playError}</Text> : null}
-        {listLoading && <ActivityIndicator style={styles.loader} />}
-        {listError != null && listError !== '' ? (
-          <Text style={styles.errorText}>{listError}</Text>
-        ) : null}
-        {!listLoading && !listError && episodes.length === 0 ? (
-          <Text style={styles.cardHint}>No episodes in the database yet.</Text>
-        ) : null}
-
-        <FlatList
-          style={styles.episodeList}
-          data={episodes}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => {
-            const playable = episodeIsPlayable(item);
-            const isActive =
-              sound != null &&
-              activeEpisode != null &&
-              loadingEpisodeId == null &&
-              String(activeEpisode.id) === String(item.id);
-            const isLoadingRow = loadingEpisodeId === String(item.id);
-            let action = 'Play';
-            if (!playable && item.status === 'failed') action = 'Failed';
-            else if (!playable) action = 'Processing';
-            else if (isLoadingRow) action = '…';
-            else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
-            return (
+      ) : (
+        <>
+          <View style={styles.middleRow}>
+            {!recentFirst ? (
+              <View style={[styles.recentSquare, { width: squareSize, height: squareSize }]}>
+                <Text style={styles.cardLabel}>Recently played</Text>
+                <Text style={styles.cardHint}>Nothing yet</Text>
+              </View>
+            ) : (
               <Pressable
                 style={({ pressed }) => [
-                  styles.episodeRow,
-                  !playable && styles.episodeRowDisabled,
-                  pressed && playable && styles.episodeRowPressed,
+                  styles.recentSquare,
+                  { width: squareSize, height: squareSize },
+                  pressed && recentCanPlay && styles.episodeRowPressed,
                 ]}
-                onPress={() => void toggleEpisode(item)}
-                disabled={isLoadingRow || !playable}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !recentCanPlay }}
+                onPress={() => {
+                  if (!recentResolved || !recentCanPlay) return;
+                  setPlayError(null);
+                  void toggleEpisode(recentResolved);
+                }}
+                disabled={!recentCanPlay}
               >
-                <Text style={styles.episodeTitle} numberOfLines={2}>
-                  {item.title}
+                <Text style={styles.cardLabel}>Recently played</Text>
+                <Text style={styles.recentTitle} numberOfLines={3}>
+                  {recentFirst.title}
                 </Text>
-                {isLoadingRow ? (
-                  <ActivityIndicator size="small" color="#027525" />
-                ) : (
-                  <Text style={styles.episodeAction}>{action}</Text>
-                )}
+                <Text style={styles.recentHint}>
+                  {!recentCanPlay
+                    ? recentResolved?.status === 'failed'
+                      ? 'Unavailable'
+                      : 'Still processing'
+                    : playingRecent
+                      ? '▶ Playing'
+                      : 'Tap to play'}
+                </Text>
               </Pressable>
-            );
-          }}
-          ListFooterComponent={<View style={styles.listFooter} />}
-        />
-      </View>
+            )}
+
+            <Pressable
+              style={({ pressed }) => [styles.cityPanel, pressed && styles.cityPanelPressed]}
+              onPress={() => {
+                setCitySearch('');
+                setCityModalVisible(true);
+              }}
+            >
+              <Text style={styles.cityCardLabel}>Subscribed city</Text>
+              <Text style={styles.cityName} numberOfLines={3}>
+                {subscribedHydrated ? subscribedCity ?? 'Tap to choose' : '…'}
+              </Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.bottomPanel}>
+            <Text style={styles.cardLabel}>Episodes</Text>
+            {playError != null && playError !== '' ? (
+              <Text style={styles.errorText}>{playError}</Text>
+            ) : null}
+            {!subscribedHydrated ? (
+              <Text style={styles.cardHint}>Loading your city preference…</Text>
+            ) : null}
+            {subscribedHydrated && !subscribedCity ? (
+              <Text style={styles.cardHint}>Choose a subscribed city to load episodes.</Text>
+            ) : null}
+            {listLoading ? <ActivityIndicator style={styles.loader} /> : null}
+            {listError != null && listError !== '' ? (
+              <Text style={styles.errorText}>{listError}</Text>
+            ) : null}
+            {subscribedHydrated &&
+            subscribedCity &&
+            !listLoading &&
+            !listError &&
+            episodes.length === 0 ? (
+              <Text style={styles.cardHint}>
+                No episodes for this city yet. Upload from the website.
+              </Text>
+            ) : null}
+
+            {subscribedCity ? (
+              <FlatList
+                style={styles.episodeList}
+                data={episodes}
+                keyExtractor={(item) => String(item.id)}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => renderEpisodeRow(item)}
+                ListFooterComponent={<View style={styles.listFooter} />}
+              />
+            ) : null}
+          </View>
+        </>
+      )}
 
       {activeEpisode != null && sound != null && (
         <View style={styles.playerBar}>
@@ -361,7 +602,9 @@ export default function App() {
             disabled={loadingEpisodeId != null || durationMillis <= 0}
           />
           <View style={styles.timeRow}>
-            <Text style={styles.timeText}>{formatTime(isScrubbing ? scrubMillis : positionMillis)}</Text>
+            <Text style={styles.timeText}>
+              {formatTime(isScrubbing ? scrubMillis : positionMillis)}
+            </Text>
             <Text style={styles.timeText}>{formatTime(durationMillis)}</Text>
           </View>
           <Pressable
@@ -372,6 +615,55 @@ export default function App() {
           </Pressable>
         </View>
       )}
+
+      <Modal
+        visible={cityModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCityModalVisible(false)}
+      >
+        <View style={styles.cityModalRoot}>
+          <Pressable
+            style={styles.cityModalBackdrop}
+            onPress={() => setCityModalVisible(false)}
+            accessibilityLabel="Close city picker"
+          />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.cityModalKeyboard}
+          >
+            <View style={styles.cityModalSheet}>
+              <Text style={styles.cityModalHeading}>Subscribed city</Text>
+              <TextInput
+                style={styles.cityModalSearch}
+                placeholder="Search cities…"
+                placeholderTextColor="#6aaa82"
+                value={citySearch}
+                onChangeText={setCitySearch}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              <FlatList
+                data={cityPickerMatches}
+                keyExtractor={(item, i) => `${i}-${item.slice(0, 24)}`}
+                style={styles.cityModalList}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => (
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.cityPickRow,
+                      pressed && styles.cityPickRowPressed,
+                    ]}
+                    onPress={() => void pickSubscribedCity(item)}
+                  >
+                    <Text style={styles.cityPickRowText}>{item}</Text>
+                  </Pressable>
+                )}
+              />
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -386,13 +678,20 @@ const styles = StyleSheet.create({
   safeTop: {
     height: Platform.select({ ios: 52, android: 12, default: 12 }),
   },
+  logo: {
+    width: 64,
+    height: 64,
+    marginBottom: 8,
+    alignSelf: 'flex-start',
+  },
   searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
     height: 52,
     borderRadius: 14,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#b8dfc4',
-    justifyContent: 'center',
     paddingHorizontal: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -400,9 +699,32 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  searchPlaceholder: {
+  searchInput: {
+    flex: 1,
     fontSize: 16,
+    color: '#027525',
+    paddingVertical: 0,
+  },
+  clearBtn: {
+    paddingLeft: 8,
+    paddingVertical: 4,
+  },
+  clearBtnText: {
+    fontSize: 15,
     color: '#6aaa82',
+    fontWeight: '600',
+  },
+  resultsPanel: {
+    flex: 1,
+    marginTop: 16,
+  },
+  resultsHeader: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#5a9970',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 10,
   },
   middleRow: {
     flexDirection: 'row',
@@ -436,6 +758,9 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
+  cityPanelPressed: {
+    opacity: 0.92,
+  },
   cardLabel: {
     fontSize: 12,
     fontWeight: '600',
@@ -461,6 +786,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#3d7a55',
     lineHeight: 20,
+  },
+  recentTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#027525',
+    lineHeight: 19,
+    marginBottom: 4,
+  },
+  recentHint: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#6aaa82',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
   bottomPanel: {
     flex: 1,
@@ -525,6 +864,62 @@ const styles = StyleSheet.create({
   },
   listFooter: {
     height: 8,
+  },
+  cityModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(20, 30, 25, 0.45)',
+  },
+  cityModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  cityModalKeyboard: {
+    width: '100%',
+    maxHeight: '78%',
+  },
+  cityModalSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 28,
+    borderWidth: 1,
+    borderColor: '#b8dfc4',
+    maxHeight: '100%',
+  },
+  cityModalHeading: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1e3d2e',
+    marginBottom: 12,
+  },
+  cityModalSearch: {
+    borderWidth: 1,
+    borderColor: '#bccac2',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 15,
+    marginBottom: 10,
+    color: '#1e3d2e',
+  },
+  cityModalList: {
+    flexGrow: 0,
+    maxHeight: 420,
+  },
+  cityPickRow: {
+    paddingVertical: 13,
+    paddingHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e5ede8',
+  },
+  cityPickRowPressed: {
+    backgroundColor: '#f3faf6',
+  },
+  cityPickRowText: {
+    fontSize: 15,
+    color: '#1e3d2e',
   },
   playerBar: {
     marginTop: 12,
