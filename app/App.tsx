@@ -1,10 +1,12 @@
 import { Audio, type AVPlaybackStatus } from 'expo-av';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Image,
+  KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
@@ -18,12 +20,24 @@ import Slider from '@react-native-community/slider';
 import { cacheRemoteAudioForPlayback } from './lib/cacheRemoteAudio';
 import { createEpisodePlaybackUrl } from './lib/episodeSignedAudioUrl';
 import { supabase } from './lib/supabase';
+import LOCATION_JSON from './data/locations.json';
+
+const LOCATION_LIST = LOCATION_JSON as string[];
 
 type EpisodeRow = {
   id: string;
   title: string;
-  storage_path: string;
+  storage_path: string | null;
+  location?: string | null;
+  status?: string | null;
 };
+
+const SUBSCRIBED_CITY_KEY = 'lil_sebastian_subscribed_city';
+
+function episodeHasPlayableAudio(ep: EpisodeRow): boolean {
+  if (ep.status === 'failed') return false;
+  return !!(ep.storage_path && ep.storage_path.replace(/^\/+/, '').trim().length);
+}
 
 function normalizeStoragePath(path: string): string {
   return path.replace(/^\/+/, '');
@@ -65,12 +79,32 @@ export default function App() {
   const wasPlayingBeforeScrubRef = useRef(false);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [subscribedCity, setSubscribedCity] = useState<string | null>(null);
+  const [subscribedHydrated, setSubscribedHydrated] = useState(false);
+  const [cityModalVisible, setCityModalVisible] = useState(false);
+  const [citySearch, setCitySearch] = useState('');
+
   const isSearching = searchQuery.trim().length > 0;
   const filteredEpisodes = isSearching
     ? episodes.filter((ep) =>
         ep.title.toLowerCase().includes(searchQuery.trim().toLowerCase())
       )
     : episodes;
+
+  const cityPickerMatches = useMemo(() => {
+    const q = citySearch.trim().toLowerCase();
+    if (!q.length) return LOCATION_LIST.slice(0, 100);
+    return LOCATION_LIST.filter((loc) => loc.toLowerCase().includes(q)).slice(0, 150);
+  }, [citySearch]);
+
+  const pickSubscribedCity = useCallback(async (loc: string) => {
+    const v = loc.trim();
+    if (!v.length) return;
+    setSubscribedCity(v);
+    await AsyncStorage.setItem(SUBSCRIBED_CITY_KEY, v);
+    setCityModalVisible(false);
+    setCitySearch('');
+  }, []);
 
   // Load persisted recents on mount
   useEffect(() => {
@@ -116,6 +150,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    void AsyncStorage.getItem(SUBSCRIBED_CITY_KEY).then((raw) => {
+      const next = raw?.trim() || '';
+      setSubscribedCity(next.length ? next : null);
+      setSubscribedHydrated(true);
+    });
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!process.env.EXPO_PUBLIC_SUPABASE_URL?.length) {
@@ -123,19 +165,34 @@ export default function App() {
         setListLoading(false);
         return;
       }
+      if (!subscribedHydrated) return;
+
+      if (!subscribedCity) {
+        setEpisodes([]);
+        setListError(null);
+        setListLoading(false);
+        if (cancelled) return;
+        return;
+      }
+
+      setListLoading(true);
+      setListError(null);
       const { data, error } = await supabase
         .from('episodes')
-        .select('id, title, storage_path')
+        .select('id, title, storage_path, location, status')
+        .eq('location', subscribedCity)
         .order('id', { ascending: true });
+
       if (cancelled) return;
       if (error) setListError(error.message);
       else setEpisodes((data ?? []) as EpisodeRow[]);
       setListLoading(false);
     })();
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [subscribedHydrated, subscribedCity]);
 
   const unloadPlayer = useCallback(async () => {
     const current = soundRef.current;
@@ -169,7 +226,11 @@ export default function App() {
   const loadAndPlayEpisode = useCallback(
     async (episode: EpisodeRow) => {
       setPlayError(null);
-      const path = normalizeStoragePath(episode.storage_path);
+      if (!episodeHasPlayableAudio(episode)) {
+        setPlayError('This episode is still processing.');
+        return;
+      }
+      const path = normalizeStoragePath(episode.storage_path ?? '');
 
       try {
         if (soundRef.current) {
@@ -213,6 +274,8 @@ export default function App() {
 
   const toggleEpisode = useCallback(
     async (episode: EpisodeRow) => {
+      if (!episodeHasPlayableAudio(episode)) return;
+
       const currentSound = soundRef.current;
 
       if (activeEpisode?.id === episode.id && currentSound) {
@@ -318,16 +381,23 @@ export default function App() {
               keyExtractor={(item) => item.id}
               keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => {
+                const playable = episodeHasPlayableAudio(item);
                 const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
                 const isLoadingRow = loadingEpisodeId === item.id;
                 let action = 'Play';
-                if (isLoadingRow) action = '…';
+                if (!playable && item.status === 'failed') action = 'Failed';
+                else if (!playable) action = 'Processing';
+                else if (isLoadingRow) action = '…';
                 else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
                 return (
                   <Pressable
-                    style={({ pressed }) => [styles.episodeRow, pressed && styles.episodeRowPressed]}
+                    style={({ pressed }) => [
+                      styles.episodeRow,
+                      !playable && styles.episodeRowDisabled,
+                      pressed && playable && styles.episodeRowPressed,
+                    ]}
                     onPress={() => void toggleEpisode(item)}
-                    disabled={isLoadingRow}
+                    disabled={isLoadingRow || !playable}
                   >
                     <Text style={styles.episodeTitle} numberOfLines={2}>{item.title}</Text>
                     {isLoadingRow
@@ -351,9 +421,14 @@ export default function App() {
                 pressed && recentEpisodes.length > 0 && styles.episodeRowPressed,
               ]}
               onPress={() => {
-                if (recentEpisodes.length > 0) void toggleEpisode(recentEpisodes[0]);
+                if (recentEpisodes.length === 0) return;
+                if (!episodeHasPlayableAudio(recentEpisodes[0])) return;
+                void toggleEpisode(recentEpisodes[0]);
               }}
-              disabled={recentEpisodes.length === 0}
+              disabled={
+                recentEpisodes.length === 0 ||
+                !episodeHasPlayableAudio(recentEpisodes[0])
+              }
             >
               {recentEpisodes.length > 0 ? (
                 <>
@@ -373,10 +448,18 @@ export default function App() {
               )}
             </Pressable>
 
-            <View style={styles.cityPanel}>
+            <Pressable
+              style={({ pressed }) => [styles.cityPanel, pressed && styles.cityPanelPressed]}
+              onPress={() => {
+                setCitySearch('');
+                setCityModalVisible(true);
+              }}
+            >
               <Text style={styles.cityCardLabel}>Subscribed city</Text>
-              <Text style={styles.cityName}>Your city</Text>
-            </View>
+              <Text style={styles.cityName} numberOfLines={3}>
+                {subscribedHydrated ? subscribedCity ?? 'Tap to choose' : '…'}
+              </Text>
+            </Pressable>
           </View>
 
           <View style={styles.bottomPanel}>
@@ -386,38 +469,58 @@ export default function App() {
             {listError != null && listError !== '' ? (
               <Text style={styles.errorText}>{listError}</Text>
             ) : null}
-            {!listLoading && !listError && episodes.length === 0 ? (
-              <Text style={styles.cardHint}>No episodes in the database yet.</Text>
+            {!subscribedHydrated ? (
+              <Text style={styles.cardHint}>Loading your city preference…</Text>
+            ) : null}
+            {subscribedHydrated && !subscribedCity ? (
+              <Text style={styles.cardHint}>Choose a subscribed city to load episodes.</Text>
+            ) : null}
+            {subscribedHydrated && subscribedCity &&
+            !listLoading &&
+            !listError &&
+            episodes.length === 0 ? (
+              <Text style={styles.cardHint}>
+                No episodes for this city yet. Upload from the web app or switch city.
+              </Text>
             ) : null}
 
-            <FlatList
-              style={styles.episodeList}
-              data={episodes}
-              keyExtractor={(item) => item.id}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => {
-                const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
-                const isLoadingRow = loadingEpisodeId === item.id;
-                let action = 'Play';
-                if (isLoadingRow) action = '…';
-                else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
-                return (
-                  <Pressable
-                    style={({ pressed }) => [styles.episodeRow, pressed && styles.episodeRowPressed]}
-                    onPress={() => void toggleEpisode(item)}
-                    disabled={isLoadingRow}
-                  >
-                    <Text style={styles.episodeTitle} numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                    {isLoadingRow
-                      ? <ActivityIndicator size="small" color="#027525" />
-                      : <Text style={styles.episodeAction}>{action}</Text>}
-                  </Pressable>
-                );
-              }}
-              ListFooterComponent={<View style={styles.listFooter} />}
-            />
+            {subscribedCity ? (
+              <FlatList
+                style={styles.episodeList}
+                data={episodes}
+                keyExtractor={(item) => item.id}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => {
+                  const playable = episodeHasPlayableAudio(item);
+                  const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
+                  const isLoadingRow = loadingEpisodeId === item.id;
+                  let action = 'Play';
+                  if (!playable && item.status === 'failed') action = 'Failed';
+                  else if (!playable) action = 'Processing';
+                  else if (isLoadingRow) action = '…';
+                  else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
+                  return (
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.episodeRow,
+                        !playable && styles.episodeRowDisabled,
+                        pressed && playable && styles.episodeRowPressed,
+                      ]}
+                      onPress={() => void toggleEpisode(item)}
+                      disabled={isLoadingRow || !playable}
+                    >
+                      <Text style={styles.episodeTitle} numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                      {isLoadingRow
+                        ? <ActivityIndicator size="small" color="#027525" />
+                        : <Text style={styles.episodeAction}>{action}</Text>}
+                    </Pressable>
+                  );
+                }}
+                ListFooterComponent={<View style={styles.listFooter} />}
+              />
+            ) : null}
           </View>
         </>
       )}
@@ -477,6 +580,52 @@ export default function App() {
           </Pressable>
         </View>
       )}
+
+      <Modal
+        visible={cityModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCityModalVisible(false)}
+      >
+        <View style={styles.cityModalRoot}>
+          <Pressable
+            style={styles.cityModalBackdrop}
+            onPress={() => setCityModalVisible(false)}
+            accessibilityLabel="Close city picker"
+          />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.cityModalKeyboard}
+          >
+            <View style={styles.cityModalSheet}>
+              <Text style={styles.cityModalHeading}>Subscribed city</Text>
+              <TextInput
+                style={styles.cityModalSearch}
+                placeholder="Search cities…"
+                placeholderTextColor="#6aaa82"
+                value={citySearch}
+                onChangeText={setCitySearch}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+              <FlatList
+                data={cityPickerMatches}
+                keyExtractor={(item, i) => `${i}-${item.slice(0, 24)}`}
+                style={styles.cityModalList}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => (
+                  <Pressable
+                    style={({ pressed }) => [styles.cityPickRow, pressed && styles.cityPickRowPressed]}
+                    onPress={() => void pickSubscribedCity(item)}
+                  >
+                    <Text style={styles.cityPickRowText}>{item}</Text>
+                  </Pressable>
+                )}
+              />
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -572,6 +721,9 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
+  cityPanelPressed: {
+    opacity: 0.92,
+  },
   cardLabel: {
     fontSize: 12,
     fontWeight: '600',
@@ -657,6 +809,11 @@ const styles = StyleSheet.create({
   episodeRowPressed: {
     opacity: 0.85,
   },
+  episodeRowDisabled: {
+    opacity: 0.7,
+    borderColor: '#d5ddd8',
+    backgroundColor: '#f5f7f6',
+  },
   episodeTitle: {
     flex: 1,
     fontSize: 15,
@@ -670,6 +827,62 @@ const styles = StyleSheet.create({
   },
   listFooter: {
     height: 8,
+  },
+  cityModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(20, 30, 25, 0.45)',
+  },
+  cityModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  cityModalKeyboard: {
+    width: '100%',
+    maxHeight: '78%',
+  },
+  cityModalSheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 28,
+    borderWidth: 1,
+    borderColor: '#b8dfc4',
+    maxHeight: '100%',
+  },
+  cityModalHeading: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1e3d2e',
+    marginBottom: 12,
+  },
+  cityModalSearch: {
+    borderWidth: 1,
+    borderColor: '#bccac2',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 15,
+    marginBottom: 10,
+    color: '#1e3d2e',
+  },
+  cityModalList: {
+    flexGrow: 0,
+    maxHeight: 420,
+  },
+  cityPickRow: {
+    paddingVertical: 13,
+    paddingHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#e5ede8',
+  },
+  cityPickRowPressed: {
+    backgroundColor: '#f3faf6',
+  },
+  cityPickRowText: {
+    fontSize: 15,
+    color: '#1e3d2e',
   },
   playerBar: {
     marginTop: 12,

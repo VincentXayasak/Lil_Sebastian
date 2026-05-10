@@ -30,13 +30,20 @@
         <span class="recent-hint" id="recent-hint" hidden>Tap to play</span>
       </button>
 
-      <div class="city-panel">
+      <button type="button" class="city-panel" id="city-subscribe-btn" aria-label="Choose subscribed city">
         <div class="city-label">Subscribed city</div>
-        <div class="city-name">Your city</div>
-      </div>
+        <div class="city-name" id="city-subscribe-display">Tap to choose</div>
+      </button>
     </div>
 
     <input type="file" id="file-input" accept="video/*" style="display: none;" />
+
+    <div class="upload-city-row">
+      <span class="upload-city-label">Episode city</span>
+      <button type="button" class="upload-city-picker" id="upload-city-btn" aria-label="Choose city for this upload">
+        Tap to choose
+      </button>
+    </div>
 
     <button class="upload-block" id="upload-block" aria-label="Upload a podcast episode">
       <div class="upload-text-group">
@@ -77,6 +84,18 @@
         <span class="listen-time" id="listen-time-duration">0:00</span>
       </div>
       <button type="button" class="listen-play-toggle" id="listen-play-toggle">Play</button>
+    </div>
+  </div>
+
+  <div id="city-modal" class="city-modal" hidden role="dialog" aria-modal="true" aria-labelledby="city-modal-title">
+    <div class="city-modal-backdrop" id="city-modal-backdrop"></div>
+    <div class="city-modal-sheet">
+      <div class="city-modal-header">
+        <div class="city-modal-title" id="city-modal-title">Choose city</div>
+        <button type="button" class="city-modal-close" id="city-modal-close" aria-label="Close">✕</button>
+      </div>
+      <input type="search" id="city-modal-search" class="city-modal-search" placeholder="Search cities…" autocomplete="off" autocorrect="off" spellcheck="false" />
+      <ul id="city-modal-results" class="city-modal-results"></ul>
     </div>
   </div>
 

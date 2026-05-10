@@ -1,5 +1,203 @@
 const RECENTS_KEY = 'lil_sebastian_recents';
 const MAX_RECENTS = 5;
+const SUBSCRIBED_CITY_KEY = 'lil_sebastian_subscribed_city';
+const UPLOAD_CITY_KEY = 'lil_sebastian_upload_city';
+const LOCATION_JSON = 'data/locations.json';
+
+/** @type {string[]} */
+let allLocations = [];
+let cityLocationsPromise = null;
+/** @type {'subscribe' | 'upload'} */
+let cityModalMode = 'subscribe';
+
+function loadLocationsList() {
+  if (cityLocationsPromise) return cityLocationsPromise;
+  cityLocationsPromise = fetch(LOCATION_JSON)
+    .then((r) => {
+      if (!r.ok) throw new Error('Could not load ' + LOCATION_JSON);
+      return r.json();
+    })
+    .then((arr) => {
+      allLocations = Array.isArray(arr) ? arr : [];
+      return allLocations;
+    })
+    .catch((e) => {
+      console.warn(e);
+      allLocations = [];
+      return allLocations;
+    });
+  return cityLocationsPromise;
+}
+
+function getSubscribedCity() {
+  try {
+    return (localStorage.getItem(SUBSCRIBED_CITY_KEY) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function setSubscribedCity(v) {
+  try {
+    if (v) localStorage.setItem(SUBSCRIBED_CITY_KEY, v);
+    else localStorage.removeItem(SUBSCRIBED_CITY_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function getUploadCityPref() {
+  try {
+    return (localStorage.getItem(UPLOAD_CITY_KEY) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function setUploadCityPref(v) {
+  try {
+    if (v) localStorage.setItem(UPLOAD_CITY_KEY, v);
+    else localStorage.removeItem(UPLOAD_CITY_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+function getEffectiveUploadCity() {
+  const u = getUploadCityPref();
+  if (u) return u;
+  return getSubscribedCity();
+}
+
+function refreshCityLabels() {
+  const sub = getSubscribedCity();
+  const disp = document.getElementById('city-subscribe-display');
+  if (disp) disp.textContent = sub || 'Tap to choose';
+  const upl = document.getElementById('upload-city-btn');
+  if (upl) {
+    const eu = getEffectiveUploadCity();
+    upl.textContent = eu || 'Tap to choose';
+  }
+}
+
+function openCityModal(mode) {
+  cityModalMode = mode;
+  const modal = document.getElementById('city-modal');
+  const title = document.getElementById('city-modal-title');
+  const search = document.getElementById('city-modal-search');
+  if (!modal || !title || !search) return;
+  title.textContent = mode === 'subscribe' ? 'Subscribed city' : 'Episode city';
+  modal.hidden = false;
+  document.body.style.overflow = 'hidden';
+  search.value = '';
+  renderCityModalResults('');
+  search.focus();
+}
+
+function closeCityModal() {
+  const modal = document.getElementById('city-modal');
+  if (modal) modal.hidden = true;
+  document.body.style.overflow = '';
+}
+
+function renderCityModalResults(qRaw) {
+  const ul = document.getElementById('city-modal-results');
+  if (!ul) return;
+  ul.innerHTML = '';
+  const q = qRaw.trim().toLowerCase();
+  let list;
+  if (q.length) {
+    list = allLocations.filter((loc) => loc.toLowerCase().includes(q)).slice(0, 150);
+  } else {
+    list = allLocations.slice(0, 100);
+  }
+  list.forEach((loc) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = loc;
+    b.addEventListener('click', () => applyCityPick(loc));
+    li.appendChild(b);
+    ul.appendChild(li);
+  });
+  if (!allLocations.length) {
+    const li = document.createElement('li');
+    const wrap = document.createElement('div');
+    wrap.style.padding = '14px';
+    wrap.style.fontSize = '14px';
+    wrap.style.color = '#5e8870';
+    wrap.textContent = 'No locations list. Run: python scripts/export_locations_json.py';
+    li.appendChild(wrap);
+    ul.appendChild(li);
+    return;
+  }
+  if (!list.length) {
+    const li = document.createElement('li');
+    const wrap = document.createElement('div');
+    wrap.style.padding = '14px';
+    wrap.style.fontSize = '14px';
+    wrap.style.color = '#5e8870';
+    wrap.textContent = q ? 'No cities match — try fewer letters.' : 'Type to filter cities.';
+    li.appendChild(wrap);
+    ul.appendChild(li);
+  }
+}
+
+function applyCityPick(loc) {
+  const v = String(loc || '').trim();
+  if (!v) return;
+  if (cityModalMode === 'subscribe') {
+    setSubscribedCity(v);
+    setUploadCityPref(v);
+    document.dispatchEvent(new CustomEvent('lil-sebastian-episodes-refresh'));
+  } else {
+    setUploadCityPref(v);
+  }
+  refreshCityLabels();
+  closeCityModal();
+}
+
+void loadLocationsList().then(() => {
+  refreshCityLabels();
+});
+
+(function initCityModalUi() {
+  const subBtn = document.getElementById('city-subscribe-btn');
+  const uplBtn = document.getElementById('upload-city-btn');
+  const closeBtn = document.getElementById('city-modal-close');
+  const backdrop = document.getElementById('city-modal-backdrop');
+  const search = document.getElementById('city-modal-search');
+
+  async function armThenOpen(mode) {
+    await loadLocationsList();
+    refreshCityLabels();
+    openCityModal(mode);
+  }
+
+  if (subBtn) subBtn.addEventListener('click', () => void armThenOpen('subscribe'));
+  if (uplBtn) uplBtn.addEventListener('click', () => void armThenOpen('upload'));
+
+  if (closeBtn) closeBtn.addEventListener('click', () => closeCityModal());
+  if (backdrop) backdrop.addEventListener('click', () => closeCityModal());
+
+  const modal = document.getElementById('city-modal');
+  if (modal) {
+    modal.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') closeCityModal();
+    });
+  }
+
+  let t = 0;
+  if (search) {
+    search.addEventListener('input', () => {
+      clearTimeout(t);
+      const v = search.value;
+      t = setTimeout(() => renderCityModalResults(v), 80);
+    });
+  }
+})();
+
+refreshCityLabels();
 
 /** @typedef {{ id: string, title: string, storage_path: string }} RecentEpisode */
 
@@ -74,9 +272,21 @@ fileInput.addEventListener('change', async () => {
   const uploadLabel = document.getElementById('upload-label');
   const uploadHint = document.getElementById('upload-hint');
 
+  await loadLocationsList();
+  const episodeCity = getEffectiveUploadCity();
+  if (!episodeCity) {
+    uploadLabel.textContent = 'Choose city';
+    uploadHint.textContent =
+      'Tap Subscribed city or Episode city, then upload again.';
+    uploadBlock.style.borderColor = '#b8860b';
+    uploadBlock.style.background = '#fffbf0';
+    fileInput.value = '';
+    return;
+  }
+
   const mb = (file.size / (1024 * 1024)).toFixed(1);
   uploadLabel.textContent = 'Sending…';
-  uploadHint.textContent = file.name + ' · ' + mb + ' MB';
+  uploadHint.textContent = file.name + ' · ' + mb + ' MB · ' + episodeCity;
   uploadBlock.style.borderColor = '';
   uploadBlock.style.background = '';
 
@@ -119,6 +329,7 @@ fileInput.addEventListener('change', async () => {
   const title = episodeTitleFromFileName(file.name);
   const { error: rowError } = await sb.from('episodes').insert({
     title: title,
+    location: episodeCity.slice(0, 200),
     source_video_storage_path: objectPath,
     status: 'processing',
     storage_path: null,
@@ -133,7 +344,7 @@ fileInput.addEventListener('change', async () => {
       objectPath +
       ' · ' +
       rowError.message +
-      ' Run supabase_sql/episodes_processing.sql if needed.';
+      ' Run supabase_sql/episodes_processing.sql and episodes_location.sql if needed.';
     uploadBlock.style.borderColor = '#b8860b';
     uploadBlock.style.background = '#fffbf0';
     return;
@@ -198,12 +409,16 @@ fileInput.addEventListener('change', async () => {
       id: ep.id,
       title: ep.title,
       storage_path: ep.storage_path,
+      location: ep.location,
     };
   }
 
   function addToRecents(ep) {
     const row = normalizeRecentPayload(ep);
-    const deduped = [row, ...recentEpisodes.filter((e) => e.id !== row.id)].slice(0, MAX_RECENTS);
+    const deduped = [
+      row,
+      ...recentEpisodes.filter((e) => String(e.id) !== String(row.id)),
+    ].slice(0, MAX_RECENTS);
     recentEpisodes = deduped;
     writeRecentsToStorage(deduped);
     refreshRecentUi();
@@ -212,7 +427,7 @@ fileInput.addEventListener('change', async () => {
   /** Prefer live row so `storage_path` / `status` stay current after processing. */
   function resolveEpisodeRef(ref) {
     if (!ref) return null;
-    const live = episodes.find((e) => e.id === ref.id);
+    const live = episodes.find((e) => String(e.id) === String(ref.id));
     return live || ref;
   }
 
@@ -237,8 +452,12 @@ fileInput.addEventListener('change', async () => {
     const resolved = resolveEpisodeRef(first);
     const canPlay = !!(resolved && episodeHasPlayableAudio(resolved));
     recentBtn.disabled = !canPlay;
-    const playingRecent =
-      !!(currentEpisode && resolved && currentEpisode.id === resolved.id && !audioEl.paused);
+    const playingRecent = !!(
+      currentEpisode &&
+      resolved &&
+      String(currentEpisode.id) === String(resolved.id) &&
+      !audioEl.paused
+    );
     recentHintEl.textContent =
       playingRecent && canPlay ? '▶ Playing' : 'Tap to play';
   }
@@ -302,17 +521,30 @@ fileInput.addEventListener('change', async () => {
     configHint.hidden = true;
     sb = created.client;
 
+    const subscribedCity = getSubscribedCity();
+    if (!subscribedCity) {
+      episodes = [];
+      statusEl.textContent = 'Choose a subscribed city to see episodes.';
+      listEl.innerHTML = '';
+      refreshRecentUi();
+      if (isSearching()) renderSearchPanel();
+      return;
+    }
+
     statusEl.textContent = 'Loading episodes…';
     const { data, error } = await sb
       .from('episodes')
-      .select('id,title,storage_path,status,source_video_storage_path')
+      .select('id,title,storage_path,status,source_video_storage_path,location')
+      .eq('location', subscribedCity)
       .order('id', { ascending: true });
     if (error) {
       statusEl.textContent = 'Could not load episodes: ' + error.message;
       return;
     }
     episodes = data || [];
-    statusEl.textContent = episodes.length ? '' : 'No episodes in the database yet.';
+    statusEl.textContent = episodes.length
+      ? ''
+      : 'No episodes for this city yet. Upload one or pick another city.';
     renderEpisodeList();
 
     refreshRecentUi();
@@ -322,15 +554,18 @@ fileInput.addEventListener('change', async () => {
   function updateRowButtons(root) {
     root.querySelectorAll('.episode-play-row').forEach((btnEl) => {
       const btn = /** @type {HTMLButtonElement} */ (btnEl);
-      const ep = episodes.find((e) => e.id === btn.dataset.episodeId);
+      const ep = episodes.find((e) => String(e.id) === btn.dataset.episodeId);
       if (!ep) return;
 
-      btn.classList.toggle('is-active', !!(currentEpisode && currentEpisode.id === ep.id));
+      btn.classList.toggle(
+        'is-active',
+        !!(currentEpisode && String(currentEpisode.id) === String(ep.id))
+      );
 
       const existingSpin = btn.querySelector('.episode-loading');
       const existingAct = btn.querySelector('.episode-play-action');
 
-      if (loadingEpisodeId === ep.id) {
+      if (loadingEpisodeId != null && String(loadingEpisodeId) === String(ep.id)) {
         existingAct?.remove();
         if (!existingSpin) {
           const sp = document.createElement('span');
@@ -360,7 +595,11 @@ fileInput.addEventListener('change', async () => {
       btn.disabled = false;
       btn.classList.remove('is-failed');
 
-      const isCurrent = !!(soundReady() && currentEpisode && currentEpisode.id === ep.id);
+      const isCurrent = !!(
+        soundReady() &&
+        currentEpisode &&
+        String(currentEpisode.id) === String(ep.id)
+      );
       act.textContent = 'Play';
       if (isCurrent) {
         act.textContent = audioEl.paused
@@ -380,7 +619,7 @@ fileInput.addEventListener('change', async () => {
   function buildEpisodeRow(ep) {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.dataset.episodeId = ep.id;
+    btn.dataset.episodeId = String(ep.id);
     btn.className = 'episode-play-row';
     btn.classList.toggle('is-failed', ep.status === 'failed');
 
@@ -389,7 +628,7 @@ fileInput.addEventListener('change', async () => {
     titleSpan.textContent = ep.title;
     btn.appendChild(titleSpan);
 
-    if (loadingEpisodeId === ep.id) {
+    if (loadingEpisodeId != null && String(loadingEpisodeId) === String(ep.id)) {
       const sp = document.createElement('span');
       sp.className = 'episode-loading';
       sp.setAttribute('aria-hidden', 'true');
@@ -408,7 +647,7 @@ fileInput.addEventListener('change', async () => {
     }
 
     btn.addEventListener('click', () => {
-      const latest = episodes.find((e) => e.id === ep.id) || ep;
+      const latest = episodes.find((e) => String(e.id) === String(ep.id)) || ep;
       void onEpisodeRowClick(latest);
     });
 
@@ -499,7 +738,7 @@ fileInput.addEventListener('change', async () => {
       if (
         soundReady() &&
         currentEpisode &&
-        currentEpisode.id === ep.id &&
+        String(currentEpisode.id) === String(ep.id) &&
         loadingEpisodeId == null
       ) {
         const dur = audioEl.duration;
