@@ -1,42 +1,31 @@
 import { Audio, type AVPlaybackStatus } from 'expo-av';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
-  KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
   useWindowDimensions,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import Slider from '@react-native-community/slider';
 import { cacheRemoteAudioForPlayback } from './lib/cacheRemoteAudio';
 import { createEpisodePlaybackUrl } from './lib/episodeSignedAudioUrl';
 import { supabase } from './lib/supabase';
-import LOCATION_JSON from './data/locations.json';
-
-const LOCATION_LIST = LOCATION_JSON as string[];
 
 type EpisodeRow = {
-  id: string;
+  id: string | number;
   title: string;
   storage_path: string | null;
-  location?: string | null;
   status?: string | null;
 };
 
-const SUBSCRIBED_CITY_KEY = 'lil_sebastian_subscribed_city';
-
-function episodeHasPlayableAudio(ep: EpisodeRow): boolean {
+function episodeIsPlayable(ep: EpisodeRow): boolean {
   if (ep.status === 'failed') return false;
-  return !!(ep.storage_path && ep.storage_path.replace(/^\/+/, '').trim().length);
+  return !!ep.storage_path && ep.storage_path.replace(/^\/+/, '').length > 0;
 }
 
 function normalizeStoragePath(path: string): string {
@@ -51,9 +40,6 @@ function formatTime(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-const RECENTS_KEY = 'lil_sebastian_recents';
-const MAX_RECENTS = 5;
-
 export default function App() {
   const { width } = useWindowDimensions();
   const squareSize = Math.min(width * 0.42, 168);
@@ -62,8 +48,6 @@ export default function App() {
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
-
-  const [recentEpisodes, setRecentEpisodes] = useState<EpisodeRow[]>([]);
 
   const [sound, setSound] = useState<Audio.Sound | null>(null);
   const soundRef = useRef<Audio.Sound | null>(null);
@@ -78,54 +62,6 @@ export default function App() {
   const isScrubbingRef = useRef(false);
   const wasPlayingBeforeScrubRef = useRef(false);
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [subscribedCity, setSubscribedCity] = useState<string | null>(null);
-  const [subscribedHydrated, setSubscribedHydrated] = useState(false);
-  const [cityModalVisible, setCityModalVisible] = useState(false);
-  const [citySearch, setCitySearch] = useState('');
-
-  const isSearching = searchQuery.trim().length > 0;
-  const filteredEpisodes = isSearching
-    ? episodes.filter((ep) =>
-        ep.title.toLowerCase().includes(searchQuery.trim().toLowerCase())
-      )
-    : episodes;
-
-  const cityPickerMatches = useMemo(() => {
-    const q = citySearch.trim().toLowerCase();
-    if (!q.length) return LOCATION_LIST.slice(0, 100);
-    return LOCATION_LIST.filter((loc) => loc.toLowerCase().includes(q)).slice(0, 150);
-  }, [citySearch]);
-
-  const pickSubscribedCity = useCallback(async (loc: string) => {
-    const v = loc.trim();
-    if (!v.length) return;
-    setSubscribedCity(v);
-    await AsyncStorage.setItem(SUBSCRIBED_CITY_KEY, v);
-    setCityModalVisible(false);
-    setCitySearch('');
-  }, []);
-
-  // Load persisted recents on mount
-  useEffect(() => {
-    AsyncStorage.getItem(RECENTS_KEY).then((raw) => {
-      if (raw) {
-        try {
-          setRecentEpisodes(JSON.parse(raw) as EpisodeRow[]);
-        } catch {}
-      }
-    });
-  }, []);
-
-  const addToRecents = useCallback((episode: EpisodeRow) => {
-    setRecentEpisodes((prev) => {
-      const deduped = [episode, ...prev.filter((e) => e.id !== episode.id)];
-      const next = deduped.slice(0, MAX_RECENTS);
-      AsyncStorage.setItem(RECENTS_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, []);
-
   useEffect(() => {
     isScrubbingRef.current = isScrubbing;
   }, [isScrubbing]);
@@ -138,7 +74,8 @@ export default function App() {
     void Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
       shouldDuckAndroid: true,
-      staysActiveInBackground: false,
+      // Keep audio alive when the screen locks or the app goes to background
+      staysActiveInBackground: true,
     });
   }, []);
 
@@ -150,14 +87,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void AsyncStorage.getItem(SUBSCRIBED_CITY_KEY).then((raw) => {
-      const next = raw?.trim() || '';
-      setSubscribedCity(next.length ? next : null);
-      setSubscribedHydrated(true);
-    });
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     (async () => {
       if (!process.env.EXPO_PUBLIC_SUPABASE_URL?.length) {
@@ -165,34 +94,19 @@ export default function App() {
         setListLoading(false);
         return;
       }
-      if (!subscribedHydrated) return;
-
-      if (!subscribedCity) {
-        setEpisodes([]);
-        setListError(null);
-        setListLoading(false);
-        if (cancelled) return;
-        return;
-      }
-
-      setListLoading(true);
-      setListError(null);
       const { data, error } = await supabase
         .from('episodes')
-        .select('id, title, storage_path, location, status')
-        .eq('location', subscribedCity)
-        .order('id', { ascending: true });
-
+        .select('id, title, storage_path, status')
+        .order('id', { ascending: false });
       if (cancelled) return;
       if (error) setListError(error.message);
       else setEpisodes((data ?? []) as EpisodeRow[]);
       setListLoading(false);
     })();
-
     return () => {
       cancelled = true;
     };
-  }, [subscribedHydrated, subscribedCity]);
+  }, []);
 
   const unloadPlayer = useCallback(async () => {
     const current = soundRef.current;
@@ -226,7 +140,7 @@ export default function App() {
   const loadAndPlayEpisode = useCallback(
     async (episode: EpisodeRow) => {
       setPlayError(null);
-      if (!episodeHasPlayableAudio(episode)) {
+      if (!episodeIsPlayable(episode)) {
         setPlayError('This episode is still processing.');
         return;
       }
@@ -239,9 +153,10 @@ export default function App() {
           setSound(null);
         }
 
-        setLoadingEpisodeId(episode.id);
+        const rowId = String(episode.id);
+        setLoadingEpisodeId(rowId);
         const signedUrl = await createEpisodePlaybackUrl(path);
-        const localUri = await cacheRemoteAudioForPlayback(signedUrl, episode.id);
+        const localUri = await cacheRemoteAudioForPlayback(signedUrl, rowId);
 
         const { sound: next } = await Audio.Sound.createAsync(
           { uri: localUri },
@@ -258,7 +173,6 @@ export default function App() {
         setSound(next);
         setActiveEpisode(episode);
         setLoadingEpisodeId(null);
-        addToRecents(episode);
       } catch (e) {
         setLoadingEpisodeId(null);
         const msg = e instanceof Error ? e.message : String(e);
@@ -269,16 +183,16 @@ export default function App() {
         await unloadPlayer();
       }
     },
-    [attachPlaybackWatcher, unloadPlayer, addToRecents]
+    [attachPlaybackWatcher, unloadPlayer]
   );
 
   const toggleEpisode = useCallback(
     async (episode: EpisodeRow) => {
-      if (!episodeHasPlayableAudio(episode)) return;
+      if (!episodeIsPlayable(episode)) return;
 
       const currentSound = soundRef.current;
 
-      if (activeEpisode?.id === episode.id && currentSound) {
+      if (activeEpisode != null && String(activeEpisode.id) === String(episode.id) && currentSound) {
         try {
           const st = await currentSound.getStatusAsync();
           if (!st.isLoaded) return;
@@ -334,196 +248,74 @@ export default function App() {
       <StatusBar style="dark" />
       <View style={styles.safeTop} />
 
-      <Image
-        source={require('./assets/sebastian.png')}
-        style={styles.logo}
-        resizeMode="contain"
-      />
-
-      <View style={styles.searchBar}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search podcasts"
-          placeholderTextColor="#6aaa82"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          returnKeyType="search"
-          clearButtonMode="while-editing"
-          autoCorrect={false}
-          autoCapitalize="none"
-          accessibilityLabel="Search podcasts"
-        />
-        {isSearching && Platform.OS !== 'ios' && (
-          <Pressable
-            onPress={() => setSearchQuery('')}
-            hitSlop={8}
-            style={styles.clearBtn}
-          >
-            <Text style={styles.clearBtnText}>✕</Text>
-          </Pressable>
-        )}
+      <View style={styles.searchBar} accessibilityRole="search">
+        <Text style={styles.searchPlaceholder}>Search city</Text>
       </View>
 
-      {/* ── SEARCH RESULTS VIEW ── */}
-      {isSearching ? (
-        <View style={styles.resultsPanel}>
-          <Text style={styles.resultsHeader}>
-            {filteredEpisodes.length === 0
-              ? `No results for "${searchQuery.trim()}"`
-              : `${filteredEpisodes.length} result${filteredEpisodes.length !== 1 ? 's' : ''}`}
-          </Text>
-          {filteredEpisodes.length === 0 ? (
-            <Text style={styles.cardHint}>Try a different keyword.</Text>
-          ) : (
-            <FlatList
-              style={styles.episodeList}
-              data={filteredEpisodes}
-              keyExtractor={(item) => item.id}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => {
-                const playable = episodeHasPlayableAudio(item);
-                const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
-                const isLoadingRow = loadingEpisodeId === item.id;
-                let action = 'Play';
-                if (!playable && item.status === 'failed') action = 'Failed';
-                else if (!playable) action = 'Processing';
-                else if (isLoadingRow) action = '…';
-                else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
-                return (
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.episodeRow,
-                      !playable && styles.episodeRowDisabled,
-                      pressed && playable && styles.episodeRowPressed,
-                    ]}
-                    onPress={() => void toggleEpisode(item)}
-                    disabled={isLoadingRow || !playable}
-                  >
-                    <Text style={styles.episodeTitle} numberOfLines={2}>{item.title}</Text>
-                    {isLoadingRow
-                      ? <ActivityIndicator size="small" color="#027525" />
-                      : <Text style={styles.episodeAction}>{action}</Text>}
-                  </Pressable>
-                );
-              }}
-              ListFooterComponent={<View style={styles.listFooter} />}
-            />
-          )}
+      <View style={styles.middleRow}>
+        <View style={[styles.recentSquare, { width: squareSize, height: squareSize }]}>
+          <Text style={styles.cardLabel}>Recently listened</Text>
+          <Text style={styles.cardHint}>Podcast art / title</Text>
         </View>
-      ) : (
-        /* ── HOME VIEW ── */
-        <>
-          <View style={styles.middleRow}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.recentSquare,
-                { width: squareSize, height: squareSize },
-                pressed && recentEpisodes.length > 0 && styles.episodeRowPressed,
-              ]}
-              onPress={() => {
-                if (recentEpisodes.length === 0) return;
-                if (!episodeHasPlayableAudio(recentEpisodes[0])) return;
-                void toggleEpisode(recentEpisodes[0]);
-              }}
-              disabled={
-                recentEpisodes.length === 0 ||
-                !episodeHasPlayableAudio(recentEpisodes[0])
-              }
-            >
-              {recentEpisodes.length > 0 ? (
-                <>
-                  <Text style={styles.cardLabel}>Recently played</Text>
-                  <Text style={styles.recentTitle} numberOfLines={3}>
-                    {recentEpisodes[0].title}
-                  </Text>
-                  <Text style={styles.recentHint}>
-                    {activeEpisode?.id === recentEpisodes[0].id && isPlaying ? '▶ Playing' : 'Tap to play'}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.cardLabel}>Recently played</Text>
-                  <Text style={styles.cardHint}>Nothing yet</Text>
-                </>
-              )}
-            </Pressable>
 
-            <Pressable
-              style={({ pressed }) => [styles.cityPanel, pressed && styles.cityPanelPressed]}
-              onPress={() => {
-                setCitySearch('');
-                setCityModalVisible(true);
-              }}
-            >
-              <Text style={styles.cityCardLabel}>Subscribed city</Text>
-              <Text style={styles.cityName} numberOfLines={3}>
-                {subscribedHydrated ? subscribedCity ?? 'Tap to choose' : '…'}
-              </Text>
-            </Pressable>
-          </View>
+        <View style={styles.cityPanel}>
+          <Text style={styles.cityCardLabel}>Subscribed city</Text>
+          <Text style={styles.cityName}>Your city</Text>
+        </View>
+      </View>
 
-          <View style={styles.bottomPanel}>
-            <Text style={styles.cardLabel}>Episodes</Text>
-            {playError != null && playError !== '' ? <Text style={styles.errorText}>{playError}</Text> : null}
-            {listLoading && <ActivityIndicator style={styles.loader} />}
-            {listError != null && listError !== '' ? (
-              <Text style={styles.errorText}>{listError}</Text>
-            ) : null}
-            {!subscribedHydrated ? (
-              <Text style={styles.cardHint}>Loading your city preference…</Text>
-            ) : null}
-            {subscribedHydrated && !subscribedCity ? (
-              <Text style={styles.cardHint}>Choose a subscribed city to load episodes.</Text>
-            ) : null}
-            {subscribedHydrated && subscribedCity &&
-            !listLoading &&
-            !listError &&
-            episodes.length === 0 ? (
-              <Text style={styles.cardHint}>
-                No episodes for this city yet. Upload from the web app or switch city.
-              </Text>
-            ) : null}
+      <View style={styles.bottomPanel}>
+        <Text style={styles.cardLabel}>Episodes</Text>
+        {playError != null && playError !== '' ? <Text style={styles.errorText}>{playError}</Text> : null}
+        {listLoading && <ActivityIndicator style={styles.loader} />}
+        {listError != null && listError !== '' ? (
+          <Text style={styles.errorText}>{listError}</Text>
+        ) : null}
+        {!listLoading && !listError && episodes.length === 0 ? (
+          <Text style={styles.cardHint}>No episodes in the database yet.</Text>
+        ) : null}
 
-            {subscribedCity ? (
-              <FlatList
-                style={styles.episodeList}
-                data={episodes}
-                keyExtractor={(item) => item.id}
-                keyboardShouldPersistTaps="handled"
-                renderItem={({ item }) => {
-                  const playable = episodeHasPlayableAudio(item);
-                  const isActive = sound != null && activeEpisode?.id === item.id && loadingEpisodeId == null;
-                  const isLoadingRow = loadingEpisodeId === item.id;
-                  let action = 'Play';
-                  if (!playable && item.status === 'failed') action = 'Failed';
-                  else if (!playable) action = 'Processing';
-                  else if (isLoadingRow) action = '…';
-                  else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
-                  return (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.episodeRow,
-                        !playable && styles.episodeRowDisabled,
-                        pressed && playable && styles.episodeRowPressed,
-                      ]}
-                      onPress={() => void toggleEpisode(item)}
-                      disabled={isLoadingRow || !playable}
-                    >
-                      <Text style={styles.episodeTitle} numberOfLines={2}>
-                        {item.title}
-                      </Text>
-                      {isLoadingRow
-                        ? <ActivityIndicator size="small" color="#027525" />
-                        : <Text style={styles.episodeAction}>{action}</Text>}
-                    </Pressable>
-                  );
-                }}
-                ListFooterComponent={<View style={styles.listFooter} />}
-              />
-            ) : null}
-          </View>
-        </>
-      )}
+        <FlatList
+          style={styles.episodeList}
+          data={episodes}
+          keyExtractor={(item) => String(item.id)}
+          renderItem={({ item }) => {
+            const playable = episodeIsPlayable(item);
+            const isActive =
+              sound != null &&
+              activeEpisode != null &&
+              loadingEpisodeId == null &&
+              String(activeEpisode.id) === String(item.id);
+            const isLoadingRow = loadingEpisodeId === String(item.id);
+            let action = 'Play';
+            if (!playable && item.status === 'failed') action = 'Failed';
+            else if (!playable) action = 'Processing';
+            else if (isLoadingRow) action = '…';
+            else if (isActive) action = isPlaying ? 'Pause' : 'Resume';
+            return (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.episodeRow,
+                  !playable && styles.episodeRowDisabled,
+                  pressed && playable && styles.episodeRowPressed,
+                ]}
+                onPress={() => void toggleEpisode(item)}
+                disabled={isLoadingRow || !playable}
+              >
+                <Text style={styles.episodeTitle} numberOfLines={2}>
+                  {item.title}
+                </Text>
+                {isLoadingRow ? (
+                  <ActivityIndicator size="small" color="#027525" />
+                ) : (
+                  <Text style={styles.episodeAction}>{action}</Text>
+                )}
+              </Pressable>
+            );
+          }}
+          ListFooterComponent={<View style={styles.listFooter} />}
+        />
+      </View>
 
       {activeEpisode != null && sound != null && (
         <View style={styles.playerBar}>
@@ -540,7 +332,7 @@ export default function App() {
             </Pressable>
           </View>
           <Slider
-            key={`slider-${activeEpisode.id}`}
+            key={`slider-${String(activeEpisode.id)}`}
             style={styles.slider}
             minimumValue={0}
             maximumValue={sliderMax}
@@ -580,52 +372,6 @@ export default function App() {
           </Pressable>
         </View>
       )}
-
-      <Modal
-        visible={cityModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCityModalVisible(false)}
-      >
-        <View style={styles.cityModalRoot}>
-          <Pressable
-            style={styles.cityModalBackdrop}
-            onPress={() => setCityModalVisible(false)}
-            accessibilityLabel="Close city picker"
-          />
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            style={styles.cityModalKeyboard}
-          >
-            <View style={styles.cityModalSheet}>
-              <Text style={styles.cityModalHeading}>Subscribed city</Text>
-              <TextInput
-                style={styles.cityModalSearch}
-                placeholder="Search cities…"
-                placeholderTextColor="#6aaa82"
-                value={citySearch}
-                onChangeText={setCitySearch}
-                autoCorrect={false}
-                autoCapitalize="none"
-              />
-              <FlatList
-                data={cityPickerMatches}
-                keyExtractor={(item, i) => `${i}-${item.slice(0, 24)}`}
-                style={styles.cityModalList}
-                keyboardShouldPersistTaps="handled"
-                renderItem={({ item }) => (
-                  <Pressable
-                    style={({ pressed }) => [styles.cityPickRow, pressed && styles.cityPickRowPressed]}
-                    onPress={() => void pickSubscribedCity(item)}
-                  >
-                    <Text style={styles.cityPickRowText}>{item}</Text>
-                  </Pressable>
-                )}
-              />
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -640,21 +386,13 @@ const styles = StyleSheet.create({
   safeTop: {
     height: Platform.select({ ios: 52, android: 12, default: 12 }),
   },
-  logo: {
-    width: 64,
-    height: 64,
-    marginBottom: 8,
-    alignSelf: 'flex-start',
-    borderRadius: 0,
-  },
   searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     height: 52,
     borderRadius: 14,
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#b8dfc4',
+    justifyContent: 'center',
     paddingHorizontal: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -662,32 +400,9 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 2,
   },
-  searchInput: {
-    flex: 1,
+  searchPlaceholder: {
     fontSize: 16,
-    color: '#027525',
-    paddingVertical: 0,
-  },
-  clearBtn: {
-    paddingLeft: 8,
-    paddingVertical: 4,
-  },
-  clearBtnText: {
-    fontSize: 15,
     color: '#6aaa82',
-    fontWeight: '600',
-  },
-  resultsPanel: {
-    flex: 1,
-    marginTop: 16,
-  },
-  resultsHeader: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#5a9970',
-    textTransform: 'uppercase',
-    letterSpacing: 0.4,
-    marginBottom: 10,
   },
   middleRow: {
     flexDirection: 'row',
@@ -721,9 +436,6 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 4,
   },
-  cityPanelPressed: {
-    opacity: 0.92,
-  },
   cardLabel: {
     fontSize: 12,
     fontWeight: '600',
@@ -749,20 +461,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#3d7a55',
     lineHeight: 20,
-  },
-  recentTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#027525',
-    lineHeight: 19,
-    marginBottom: 4,
-  },
-  recentHint: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#6aaa82',
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
   },
   bottomPanel: {
     flex: 1,
@@ -827,62 +525,6 @@ const styles = StyleSheet.create({
   },
   listFooter: {
     height: 8,
-  },
-  cityModalRoot: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: 'rgba(20, 30, 25, 0.45)',
-  },
-  cityModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  cityModalKeyboard: {
-    width: '100%',
-    maxHeight: '78%',
-  },
-  cityModalSheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingHorizontal: 18,
-    paddingTop: 18,
-    paddingBottom: 28,
-    borderWidth: 1,
-    borderColor: '#b8dfc4',
-    maxHeight: '100%',
-  },
-  cityModalHeading: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#1e3d2e',
-    marginBottom: 12,
-  },
-  cityModalSearch: {
-    borderWidth: 1,
-    borderColor: '#bccac2',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    fontSize: 15,
-    marginBottom: 10,
-    color: '#1e3d2e',
-  },
-  cityModalList: {
-    flexGrow: 0,
-    maxHeight: 420,
-  },
-  cityPickRow: {
-    paddingVertical: 13,
-    paddingHorizontal: 8,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#e5ede8',
-  },
-  cityPickRowPressed: {
-    backgroundColor: '#f3faf6',
-  },
-  cityPickRowText: {
-    fontSize: 15,
-    color: '#1e3d2e',
   },
   playerBar: {
     marginTop: 12,
