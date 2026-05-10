@@ -1,80 +1,28 @@
-const PODCASTS = [
-  { title: 'The City Pulse',        city: 'New York',      duration: '34 min' },
-  { title: 'Street Level',          city: 'Chicago',       duration: '28 min' },
-  { title: 'Bay Area Breakdown',    city: 'San Francisco', duration: '41 min' },
-  { title: 'Southside Stories',     city: 'Chicago',       duration: '52 min' },
-  { title: 'Metro Dispatch',        city: 'Los Angeles',   duration: '19 min' },
-  { title: 'The Underground Line',  city: 'New York',      duration: '37 min' },
-  { title: 'Cactus and Concrete',   city: 'Phoenix',       duration: '23 min' },
-  { title: 'Rainy Day Radio',       city: 'Seattle',       duration: '45 min' },
-  { title: 'Deep South Dialogue',   city: 'Atlanta',       duration: '31 min' },
-  { title: 'Harbor Talks',          city: 'Boston',        duration: '26 min' },
-];
+const RECENTS_KEY = 'lil_sebastian_recents';
+const MAX_RECENTS = 5;
 
-const searchInput   = document.getElementById('search-input');
-const searchBtn     = document.getElementById('search-btn');
-const clearBtn      = document.getElementById('clear-btn');
-const homeView      = document.getElementById('home-view');
-const resultsView   = document.getElementById('results-view');
-const noResultsView = document.getElementById('no-results-view');
-const resultsList   = document.getElementById('results-list');
-const resultsHeader = document.getElementById('results-header');
-const noResultsQuery = document.getElementById('no-results-query');
+/** @typedef {{ id: string, title: string, storage_path: string }} RecentEpisode */
 
-function showView(name) {
-  homeView.style.display      = name === 'home'       ? 'flex' : 'none';
-  resultsView.style.display   = name === 'results'    ? 'flex' : 'none';
-  noResultsView.style.display = name === 'no-results' ? 'flex' : 'none';
-}
-
-function runSearch() {
-  const query = searchInput.value.trim();
-  if (!query) { showView('home'); return; }
-
-  const matches = PODCASTS.filter(p =>
-    p.title.toLowerCase().includes(query.toLowerCase()) ||
-    p.city.toLowerCase().includes(query.toLowerCase())
-  );
-
-  if (matches.length === 0) {
-    noResultsQuery.textContent = '"' + query + '"';
-    showView('no-results');
-    return;
+/** @returns {RecentEpisode[]} */
+function readRecentsFromStorage() {
+  try {
+    const raw = localStorage.getItem(RECENTS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
-
-  resultsHeader.textContent = matches.length + ' result' + (matches.length !== 1 ? 's' : '');
-  resultsList.innerHTML = matches.map(p => `
-    <div class="result-card">
-      <div class="result-thumb">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
-          <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3z"/>
-          <path d="M3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
-        </svg>
-      </div>
-      <div class="result-info">
-        <div class="result-title">${p.title}</div>
-        <div class="result-meta">${p.duration}</div>
-      </div>
-      <span class="result-city">${p.city}</span>
-    </div>
-  `).join('');
-
-  showView('results');
 }
 
-searchBtn.addEventListener('click', runSearch);
-searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
-searchInput.addEventListener('input', () => {
-  clearBtn.classList.toggle('visible', searchInput.value.length > 0);
-  if (searchInput.value.trim() === '') showView('home');
-});
-clearBtn.addEventListener('click', () => {
-  searchInput.value = '';
-  clearBtn.classList.remove('visible');
-  searchInput.focus();
-  showView('home');
-});
+/** @param {RecentEpisode[]} rows */
+function writeRecentsToStorage(rows) {
+  try {
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(rows));
+  } catch {
+    /* ignore quota */
+  }
+}
 
 function createLilSebastianSupabase() {
   const cfg = window.LIL_SEBASTIAN_CONFIG || {};
@@ -108,10 +56,9 @@ function episodeHasPlayableAudio(ep) {
 }
 
 /* Upload */
+
 const uploadBlock = document.getElementById('upload-block');
-const fileInput   = document.getElementById('file-input');
-const uploadLabel = document.getElementById('upload-label');
-const uploadHint  = document.getElementById('upload-hint');
+const fileInput = document.getElementById('file-input');
 
 let uploadInFlight = false;
 
@@ -123,6 +70,9 @@ uploadBlock.addEventListener('click', () => {
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files[0];
   if (!file) return;
+
+  const uploadLabel = document.getElementById('upload-label');
+  const uploadHint = document.getElementById('upload-hint');
 
   const mb = (file.size / (1024 * 1024)).toFixed(1);
   uploadLabel.textContent = 'Sending…';
@@ -177,7 +127,13 @@ fileInput.addEventListener('change', async () => {
   if (rowError) {
     uploadLabel.textContent = 'Uploaded (DB error)';
     uploadHint.textContent =
-      'Saved to ' + bucket + '/' + objectPath + ' · ' + rowError.message + ' Run supabase_sql/episodes_processing.sql if needed.';
+      'Saved to ' +
+      bucket +
+      '/' +
+      objectPath +
+      ' · ' +
+      rowError.message +
+      ' Run supabase_sql/episodes_processing.sql if needed.';
     uploadBlock.style.borderColor = '#b8860b';
     uploadBlock.style.background = '#fffbf0';
     return;
@@ -193,6 +149,13 @@ fileInput.addEventListener('change', async () => {
 
 (function lilSebastianListen() {
   const cfg = window.LIL_SEBASTIAN_CONFIG || {};
+  const homeView = document.getElementById('home-view');
+  const resultsView = document.getElementById('results-view');
+  const resultsHeader = document.getElementById('results-header');
+  const resultsHint = document.getElementById('results-hint');
+  const resultsList = document.getElementById('results-list');
+  const searchInput = document.getElementById('search-input');
+  const clearBtn = document.getElementById('clear-btn');
   const statusEl = document.getElementById('episodes-status');
   const listEl = document.getElementById('episodes-list-real');
   const configHint = document.getElementById('config-hint');
@@ -204,11 +167,20 @@ fileInput.addEventListener('change', async () => {
   const tDur = document.getElementById('listen-time-duration');
   const playToggle = document.getElementById('listen-play-toggle');
   const closeBtn = document.getElementById('listen-close');
+  const recentBtn = document.getElementById('recent-square-btn');
+  const recentTitleEl = document.getElementById('recent-title');
+  const recentEmptyHint = document.getElementById('recent-empty-hint');
+  const recentHintEl = document.getElementById('recent-hint');
 
   let sb = null;
+  /** @type {any[]} */
   let episodes = [];
+  /** @type {RecentEpisode[]} */
+  let recentEpisodes = readRecentsFromStorage();
   let currentEpisode = null;
   let scrubDragging = false;
+  /** @type {string | null} */
+  let loadingEpisodeId = null;
 
   function fmtTime(sec) {
     if (!Number.isFinite(sec) || sec < 0) return '0:00';
@@ -218,8 +190,106 @@ fileInput.addEventListener('change', async () => {
   }
 
   function setPlayerOpen(open) {
-    document.body.classList.toggle('player-open', open);
     playerBar.hidden = !open;
+  }
+
+  function normalizeRecentPayload(ep) {
+    return {
+      id: ep.id,
+      title: ep.title,
+      storage_path: ep.storage_path,
+    };
+  }
+
+  function addToRecents(ep) {
+    const row = normalizeRecentPayload(ep);
+    const deduped = [row, ...recentEpisodes.filter((e) => e.id !== row.id)].slice(0, MAX_RECENTS);
+    recentEpisodes = deduped;
+    writeRecentsToStorage(deduped);
+    refreshRecentUi();
+  }
+
+  /** Prefer live row so `storage_path` / `status` stay current after processing. */
+  function resolveEpisodeRef(ref) {
+    if (!ref) return null;
+    const live = episodes.find((e) => e.id === ref.id);
+    return live || ref;
+  }
+
+  function refreshRecentUi() {
+    const first = recentEpisodes[0];
+    const hasRecent = !!(first && first.title);
+
+    recentBtn.disabled = !hasRecent;
+    if (!hasRecent) {
+      recentTitleEl.hidden = true;
+      recentHintEl.hidden = true;
+      recentEmptyHint.hidden = false;
+      recentEmptyHint.textContent = 'Nothing yet';
+      return;
+    }
+
+    recentEmptyHint.hidden = true;
+    recentTitleEl.hidden = false;
+    recentHintEl.hidden = false;
+    recentTitleEl.textContent = first.title;
+
+    const resolved = resolveEpisodeRef(first);
+    const canPlay = !!(resolved && episodeHasPlayableAudio(resolved));
+    recentBtn.disabled = !canPlay;
+    const playingRecent =
+      !!(currentEpisode && resolved && currentEpisode.id === resolved.id && !audioEl.paused);
+    recentHintEl.textContent =
+      playingRecent && canPlay ? '▶ Playing' : 'Tap to play';
+  }
+
+  function isSearching() {
+    return searchInput.value.trim().length > 0;
+  }
+
+  function showHomeView() {
+    homeView.classList.remove('hidden');
+    resultsView.hidden = true;
+  }
+
+  function showResultsView() {
+    homeView.classList.add('hidden');
+    resultsView.hidden = false;
+  }
+
+  function syncSearchChrome() {
+    const q = searchInput.value;
+    clearBtn.hidden = q.length === 0;
+    const searching = q.trim().length > 0;
+    if (!searching) {
+      showHomeView();
+      statusEl.textContent = '';
+    }
+  }
+
+  function filteredEpisodesForSearch() {
+    const q = searchInput.value.trim().toLowerCase();
+    if (!q) return episodes;
+    return episodes.filter((ep) => ep.title.toLowerCase().includes(q));
+  }
+
+  function renderSearchPanel() {
+    const qRaw = searchInput.value.trim();
+    const list = filteredEpisodesForSearch();
+
+    if (list.length === 0) {
+      resultsHeader.textContent = 'No results for "' + qRaw + '"';
+      resultsHint.hidden = false;
+      resultsList.innerHTML = '';
+      return;
+    }
+
+    resultsHeader.textContent =
+      list.length + ' result' + (list.length !== 1 ? 's' : '');
+    resultsHint.hidden = true;
+    resultsList.innerHTML = '';
+    list.forEach((ep) => resultsList.appendChild(buildEpisodeRow(ep)));
+    updateRowButtons(resultsList);
   }
 
   async function fetchEpisodesTable() {
@@ -231,11 +301,12 @@ fileInput.addEventListener('change', async () => {
     }
     configHint.hidden = true;
     sb = created.client;
+
     statusEl.textContent = 'Loading episodes…';
     const { data, error } = await sb
       .from('episodes')
       .select('id,title,storage_path,status,source_video_storage_path')
-      .order('id', { ascending: false });
+      .order('id', { ascending: true });
     if (error) {
       statusEl.textContent = 'Could not load episodes: ' + error.message;
       return;
@@ -243,50 +314,111 @@ fileInput.addEventListener('change', async () => {
     episodes = data || [];
     statusEl.textContent = episodes.length ? '' : 'No episodes in the database yet.';
     renderEpisodeList();
+
+    refreshRecentUi();
+    if (isSearching()) renderSearchPanel();
   }
 
-  function updateRowButtons() {
-    const rows = listEl.querySelectorAll('.episode-play-row');
-    rows.forEach((btn, i) => {
-      const ep = episodes[i];
-      const act = btn.querySelector('.episode-play-action');
-      if (!ep || !act) return;
-      if (!episodeHasPlayableAudio(ep)) {
-        act.textContent = ep.status === 'failed' ? 'Failed' : 'Processing';
-        btn.classList.remove('is-active');
+  function updateRowButtons(root) {
+    root.querySelectorAll('.episode-play-row').forEach((btnEl) => {
+      const btn = /** @type {HTMLButtonElement} */ (btnEl);
+      const ep = episodes.find((e) => e.id === btn.dataset.episodeId);
+      if (!ep) return;
+
+      btn.classList.toggle('is-active', !!(currentEpisode && currentEpisode.id === ep.id));
+
+      const existingSpin = btn.querySelector('.episode-loading');
+      const existingAct = btn.querySelector('.episode-play-action');
+
+      if (loadingEpisodeId === ep.id) {
+        existingAct?.remove();
+        if (!existingSpin) {
+          const sp = document.createElement('span');
+          sp.className = 'episode-loading';
+          sp.setAttribute('aria-hidden', 'true');
+          btn.appendChild(sp);
+        }
+        btn.disabled = true;
         return;
       }
-      const isActive = currentEpisode && currentEpisode.id === ep.id;
-      btn.classList.toggle('is-active', !!isActive);
-      if (!isActive) act.textContent = 'Play';
-      else if (!audioEl.paused) act.textContent = 'Pause';
-      else if (audioEl.ended) act.textContent = 'Replay';
-      else act.textContent = 'Resume';
+
+      existingSpin?.remove();
+      let act = btn.querySelector('.episode-play-action');
+      if (!act) {
+        act = document.createElement('span');
+        act.className = 'episode-play-action';
+        btn.appendChild(act);
+      }
+
+      if (!episodeHasPlayableAudio(ep)) {
+        act.textContent = ep.status === 'failed' ? 'Failed' : 'Processing';
+        btn.disabled = true;
+        btn.classList.toggle('is-failed', ep.status === 'failed');
+        return;
+      }
+
+      btn.disabled = false;
+      btn.classList.remove('is-failed');
+
+      const isCurrent = !!(soundReady() && currentEpisode && currentEpisode.id === ep.id);
+      act.textContent = 'Play';
+      if (isCurrent) {
+        act.textContent = audioEl.paused
+          ? audioEl.ended
+            ? 'Replay'
+            : 'Resume'
+          : 'Pause';
+      }
     });
+  }
+
+  function soundReady() {
+    /* audio mounted when we're playing — treat as inactive if no src */
+    return !!audioEl.getAttribute('src');
+  }
+
+  function buildEpisodeRow(ep) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.episodeId = ep.id;
+    btn.className = 'episode-play-row';
+    btn.classList.toggle('is-failed', ep.status === 'failed');
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'episode-play-title';
+    titleSpan.textContent = ep.title;
+    btn.appendChild(titleSpan);
+
+    if (loadingEpisodeId === ep.id) {
+      const sp = document.createElement('span');
+      sp.className = 'episode-loading';
+      sp.setAttribute('aria-hidden', 'true');
+      btn.appendChild(sp);
+      btn.disabled = true;
+    } else {
+      const actionMarker = document.createElement('span');
+      actionMarker.className = 'episode-play-action';
+      if (!episodeHasPlayableAudio(ep)) {
+        actionMarker.textContent = ep.status === 'failed' ? 'Failed' : 'Processing';
+        btn.disabled = true;
+      } else {
+        actionMarker.textContent = 'Play';
+      }
+      btn.appendChild(actionMarker);
+    }
+
+    btn.addEventListener('click', () => {
+      const latest = episodes.find((e) => e.id === ep.id) || ep;
+      void onEpisodeRowClick(latest);
+    });
+
+    return btn;
   }
 
   function renderEpisodeList() {
-    listEl.innerHTML = episodes
-      .map(() => {
-        return (
-          '<button type="button" class="episode-play-row">' +
-          '<span class="episode-play-icon" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>' +
-          '<span class="episode-play-title"></span>' +
-          '<span class="episode-play-action">Play</span>' +
-          '</button>'
-        );
-      })
-      .join('');
-    const rows = listEl.querySelectorAll('.episode-play-row');
-    episodes.forEach((ep, i) => {
-      const btn = rows[i];
-      const titleSpan = btn.querySelector('.episode-play-title');
-      if (titleSpan) titleSpan.textContent = ep.title;
-      btn.disabled = !episodeHasPlayableAudio(ep);
-      btn.classList.toggle('is-failed', ep.status === 'failed');
-      btn.addEventListener('click', () => onEpisodeRowClick(ep));
-    });
-    updateRowButtons();
+    listEl.innerHTML = '';
+    episodes.forEach((ep) => listEl.appendChild(buildEpisodeRow(ep)));
+    updateRowButtons(listEl);
   }
 
   async function getSignedUrl(storagePath) {
@@ -310,8 +442,13 @@ fileInput.addEventListener('change', async () => {
       tDur.textContent = '0:00';
     }
     tCur.textContent = fmtTime(audioEl.currentTime || 0);
-    playToggle.textContent = !audioEl.paused ? 'Pause' : audioEl.ended ? 'Replay' : 'Play';
-    updateRowButtons();
+    playToggle.textContent =
+      audioEl.paused ? (audioEl.ended ? 'Replay' : 'Play') : 'Pause';
+
+    refreshRecentUi();
+
+    updateRowButtons(listEl);
+    if (isSearching()) updateRowButtons(resultsList);
   }
 
   async function loadEpisode(ep) {
@@ -338,42 +475,87 @@ fileInput.addEventListener('change', async () => {
       audioEl.addEventListener('error', bad, { once: true });
     });
     await audioEl.play().catch(() => {});
+    addToRecents(ep);
     updatePlayerUi();
   }
 
   async function onEpisodeRowClick(ep) {
     if (!sb) await fetchEpisodesTable();
     if (!sb) return;
+    statusEl.textContent = '';
+
     if (ep.status === 'failed') {
       statusEl.textContent = 'This episode failed during processing.';
       return;
     }
     if (!episodeHasPlayableAudio(ep)) {
       statusEl.textContent =
-        ep.status === 'processing' ? 'Still processing — check back once the podcast is generated.' : 'No audio yet for this episode.';
+        ep.status === 'processing'
+          ? 'Still processing — check back once the podcast is generated.'
+          : 'No audio yet for this episode.';
       return;
     }
     try {
-      if (currentEpisode && currentEpisode.id === ep.id) {
+      if (
+        soundReady() &&
+        currentEpisode &&
+        currentEpisode.id === ep.id &&
+        loadingEpisodeId == null
+      ) {
         const dur = audioEl.duration;
         if (audioEl.paused) {
           if (Number.isFinite(dur) && dur > 0 && audioEl.currentTime >= dur - 0.35) {
             audioEl.currentTime = 0;
           }
           await audioEl.play().catch(() => {});
-        } else audioEl.pause();
+        } else {
+          audioEl.pause();
+        }
         updatePlayerUi();
         return;
       }
+
+      loadingEpisodeId = ep.id;
+      updateRowButtons(listEl);
+      if (isSearching()) updateRowButtons(resultsList);
+
       audioEl.pause();
+
       await loadEpisode(ep);
     } catch (e) {
-      statusEl.textContent = 'Playback: ' + (e && e.message ? e.message : String(e));
+      const msg =
+        e && e.message
+          ? String(e.message)
+          : String(e);
+      statusEl.textContent =
+        'Could not play: ' +
+        msg +
+        '. Private buckets need Storage SELECT policy for anon (see supabase_sql/storage_podcasts_private_read.sql).';
+      await unloadPlayer();
+    } finally {
+      loadingEpisodeId = null;
+      updateRowButtons(listEl);
+      if (isSearching()) updateRowButtons(resultsList);
     }
   }
 
+  async function unloadPlayer() {
+    audioEl.pause();
+    audioEl.removeAttribute('src');
+    audioEl.load();
+    currentEpisode = null;
+    loadingEpisodeId = null;
+    setPlayerOpen(false);
+    updateRowButtons(listEl);
+    if (isSearching()) updateRowButtons(resultsList);
+    tCur.textContent = '0:00';
+    tDur.textContent = '0:00';
+    scrub.value = '0';
+    refreshRecentUi();
+  }
+
   playToggle.addEventListener('click', async () => {
-    if (!currentEpisode) return;
+    if (!currentEpisode || !soundReady()) return;
     try {
       const dur = audioEl.duration;
       if (audioEl.paused) {
@@ -381,10 +563,13 @@ fileInput.addEventListener('change', async () => {
           audioEl.currentTime = 0;
         }
         await audioEl.play().catch(() => {});
-      } else audioEl.pause();
+      } else {
+        audioEl.pause();
+      }
       updatePlayerUi();
     } catch (e) {
-      statusEl.textContent = 'Playback: ' + (e && e.message ? e.message : String(e));
+      statusEl.textContent =
+        'Playback: ' + (e && e.message ? e.message : String(e));
     }
   });
 
@@ -394,19 +579,26 @@ fileInput.addEventListener('change', async () => {
   scrub.addEventListener('touchstart', () => {
     scrubDragging = true;
   }, { passive: true });
+
   function finishScrubSeek() {
     scrubDragging = false;
     const v = parseFloat(scrub.value);
-    if (Number.isFinite(v) && Number.isFinite(audioEl.duration)) audioEl.currentTime = v;
+    if (Number.isFinite(v) && Number.isFinite(audioEl.duration)) {
+      audioEl.currentTime = v;
+    }
     updatePlayerUi();
   }
+
   scrub.addEventListener('change', finishScrubSeek);
   scrub.addEventListener('mouseup', finishScrubSeek);
   scrub.addEventListener('touchend', finishScrubSeek);
+
   scrub.addEventListener('input', () => {
     if (!scrubDragging) scrubDragging = true;
     const v = parseFloat(scrub.value);
-    if (Number.isFinite(v)) tCur.textContent = fmtTime(v);
+    if (Number.isFinite(v)) {
+      tCur.textContent = fmtTime(v);
+    }
   });
 
   audioEl.addEventListener('timeupdate', updatePlayerUi);
@@ -415,21 +607,37 @@ fileInput.addEventListener('change', async () => {
   audioEl.addEventListener('playing', updatePlayerUi);
   audioEl.addEventListener('ended', updatePlayerUi);
 
-  closeBtn.addEventListener('click', () => {
-    audioEl.pause();
-    audioEl.removeAttribute('src');
-    audioEl.load();
-    currentEpisode = null;
-    setPlayerOpen(false);
-    updateRowButtons();
-    tCur.textContent = '0:00';
-    tDur.textContent = '0:00';
-    scrub.value = '0';
+  closeBtn.addEventListener('click', () => void unloadPlayer());
+
+  document.addEventListener('lil-sebastian-episodes-refresh', () => void fetchEpisodesTable());
+
+  searchInput.addEventListener('input', () => {
+    syncSearchChrome();
+    if (searchInput.value.trim()) {
+      showResultsView();
+      renderSearchPanel();
+    } else {
+      showHomeView();
+      statusEl.textContent = '';
+    }
   });
 
-  document.addEventListener('lil-sebastian-episodes-refresh', () => {
-    void fetchEpisodesTable();
+  clearBtn.addEventListener('click', () => {
+    searchInput.value = '';
+    syncSearchChrome();
+    showHomeView();
+    statusEl.textContent = '';
+    searchInput.focus();
   });
 
+  recentBtn.addEventListener('click', () => {
+    const first = recentEpisodes[0];
+    if (!first) return;
+    const ep = resolveEpisodeRef(first);
+    if (!ep || !episodeHasPlayableAudio(ep)) return;
+    void onEpisodeRowClick(ep);
+  });
+
+  refreshRecentUi();
   fetchEpisodesTable();
 })();
