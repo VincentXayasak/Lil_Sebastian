@@ -1,17 +1,42 @@
 # Lil_Sebastian
 
-Types of users: citizens, government workers
+A podcast app and website that transforms dry local government meeting recordings into funny, engaging audio episodes. Citizens can listen to their city council, planning commission, or other public meetings as a short podcast instead of watching through hours of raw footage.
 
-Government workers: provdies links to youtube channel/website (location of their video)
+## How It Works:
+1. Video gets uploaded from government worker
+2. Convert the video to M4A
+3. Transcribe audio using ElevenLabs
+4, Generate a podcast script using Gemini
+5. Synthesize multi-voice audio using ElevenLabs TTS
+6. Upload as Mp3 into a Supabase Storage
+7. Citizens can listen in their mobile app or website
 
-Citizen: able to search up and favorite
+## Setup
+### Prerequisites
+- Python 3.10+
+- npm and Node.js 18+
+- Expo CLI
+- ffmpeg installed and on your PATH
+- A Supabase API Key
+- ElevenLabs API Key
+- Google Gemini API Key
 
-Dashboard: searchbar, recently listened, favorited
+1. Clone and install python dependencies
 
-### Outline:
-1. YouTube API get transcripts. 
-2. Backup plan, get uploaded videos and get transcript using eleven labs. 
-3. Once have transcripts, put into Gemini with own personalized prompt to summarize and put as a podcast script. 
-4. Put Gemini output into eleven labs to make into podcast with different voices.
-6. Get that audio file output from eleven labs and put into app. 
-8. Make app into ios and android called "Lil Sebastion". 
+2. configur environment variables
+
+3. run the website and app
+
+## The Cast
+| Role | Character |
+| **Narrator** | Narrates transitions, intros and outros |
+| **Ben** | Co-host. |
+| ** Leslie** | Co-host |
+| ** Patrick** | Guest |
+
+## User Roles
+**Citizens** - free to open the app or website to browse episodes by city, search for their town, listent o recent meetings, and track their recently played
+
+**Government workers** - able to upload a meeting video through the website.
+
+
