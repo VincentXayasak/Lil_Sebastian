@@ -12,6 +12,9 @@
 
   <div class="app-header">
     <img class="app-logo" src="sebastian.png" width="64" height="64" alt="" />
+    <button type="button" class="auth-corner-btn" id="auth-corner-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="auth-modal">
+      <span class="auth-corner-label" id="auth-corner-label">Login / signup</span>
+    </button>
   </div>
 
   <!-- Search Bar (always visible) -->
@@ -38,14 +41,14 @@
 
     <input type="file" id="file-input" accept="video/*" style="display: none;" />
 
-    <div class="upload-city-row">
+    <div class="upload-city-row" id="upload-city-row" hidden>
       <span class="upload-city-label">Episode city</span>
       <button type="button" class="upload-city-picker" id="upload-city-btn" aria-label="Choose city for this upload">
         Tap to choose
       </button>
     </div>
 
-    <button class="upload-block" id="upload-block" aria-label="Upload a podcast episode">
+    <button class="upload-block" id="upload-block" type="button" aria-label="Upload a podcast episode" hidden>
       <div class="upload-text-group">
         <div class="card-label" id="upload-label">Upload episode</div>
         <div class="card-hint" id="upload-hint">Share a podcast to your city</div>
@@ -84,6 +87,39 @@
         <span class="listen-time" id="listen-time-duration">0:00</span>
       </div>
       <button type="button" class="listen-play-toggle" id="listen-play-toggle">Play</button>
+    </div>
+  </div>
+
+  <div id="auth-modal" class="auth-modal" hidden role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div class="auth-modal-backdrop" id="auth-modal-backdrop"></div>
+    <div class="auth-modal-sheet">
+      <div class="auth-modal-header">
+        <div class="auth-modal-title" id="auth-modal-title">Account</div>
+        <button type="button" class="city-modal-close" id="auth-modal-close" aria-label="Close">✕</button>
+      </div>
+      <div id="auth-modal-logged-in" class="auth-modal-logged-in" hidden>
+        <p class="auth-signed-in-intro">Signed in as</p>
+        <p class="auth-signed-in-email" id="auth-signed-in-email"></p>
+        <button type="button" class="auth-primary-btn" id="auth-sign-out-btn">Sign out</button>
+      </div>
+      <div id="auth-modal-guest" class="auth-modal-guest">
+        <div class="auth-tab-row" role="tablist" aria-label="Account mode">
+          <button type="button" class="auth-tab is-active" id="auth-tab-login" role="tab" aria-selected="true" data-auth-tab="login">Log in</button>
+          <button type="button" class="auth-tab" id="auth-tab-signup" role="tab" aria-selected="false" data-auth-tab="signup">Sign up</button>
+        </div>
+        <form id="auth-form" autocomplete="on" class="auth-form">
+          <label class="auth-field">
+            <span class="auth-field-label">Email</span>
+            <input type="email" id="auth-email" name="email" required autocomplete="email" inputmode="email" />
+          </label>
+          <label class="auth-field">
+            <span class="auth-field-label">Password</span>
+            <input type="password" id="auth-password" name="password" required minlength="6" autocomplete="current-password" />
+          </label>
+          <p id="auth-form-message" class="auth-form-message" role="status"></p>
+          <button type="submit" class="auth-primary-btn" id="auth-submit-btn">Log in</button>
+        </form>
+      </div>
     </div>
   </div>
 

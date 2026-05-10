@@ -27,6 +27,11 @@ body {
 
 .app-header {
   margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
 }
 
 .app-logo {
@@ -34,7 +39,218 @@ body {
   height: 64px;
   display: block;
   object-fit: contain;
-  align-self: flex-start;
+  flex-shrink: 0;
+}
+
+.auth-corner-btn {
+  flex-shrink: 0;
+  max-width: min(200px, 46vw);
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid #b8dfc4;
+  background: #fff;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #027525;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.auth-corner-btn:hover {
+  background: #f8fcf9;
+}
+
+.auth-corner-btn:active {
+  opacity: 0.92;
+}
+
+.auth-corner-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.auth-corner-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Auth modal — above city picker */
+.auth-modal[hidden] {
+  display: none !important;
+}
+
+.auth-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px))
+    max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  box-sizing: border-box;
+}
+
+.auth-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(20, 30, 25, 0.45);
+}
+
+.auth-modal-sheet {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 400px;
+  background: #fff;
+  border-radius: 18px;
+  box-shadow:
+    0 12px 48px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(0, 0, 0, 0.04);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 20px;
+}
+
+.auth-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.auth-modal-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1e3d2e;
+}
+
+.auth-tab-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #bccac2;
+  background: #f5faf7;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  color: #3d7a55;
+  cursor: pointer;
+}
+
+.auth-tab.is-active {
+  background: #027525;
+  border-color: #027525;
+  color: #f0faf3;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #5a9970;
+}
+
+.auth-field-label {
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+  font-size: 11px;
+}
+
+.auth-field input {
+  border: 1px solid #bccac2;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font: inherit;
+  font-size: 15px;
+  color: #1e3d2e;
+}
+
+.auth-field input:focus {
+  outline: 2px solid #9dd4b4;
+  outline-offset: 0;
+}
+
+.auth-form-message {
+  font-size: 14px;
+  line-height: 1.4;
+  min-height: 1.2em;
+  color: #a33;
+}
+
+.auth-form-message.is-ok {
+  color: #027525;
+}
+
+.auth-primary-btn {
+  margin-top: 4px;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-radius: 12px;
+  background: #027525;
+  color: #f0faf3;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auth-primary-btn:hover {
+  opacity: 0.95;
+}
+
+.auth-primary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Don't set display on logged-in pane without :not([hidden]) — it overrides the [hidden] attribute. */
+.auth-modal-logged-in:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-modal-guest[hidden],
+.auth-modal-logged-in[hidden] {
+  display: none !important;
+}
+
+.auth-signed-in-intro {
+  font-size: 13px;
+  font-weight: 600;
+  color: #5a9970;
+  text-transform: uppercase;
+  letter-spacing: 0.35px;
+}
+
+.auth-signed-in-email {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e3d2e;
+  word-break: break-all;
 }
 
 /* Search — mirrors app/searchBar */
@@ -189,6 +405,11 @@ body {
 
 .city-panel:active {
   opacity: 0.93;
+}
+
+.upload-city-row[hidden],
+.upload-block[hidden] {
+  display: none !important;
 }
 
 .upload-city-row {

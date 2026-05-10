@@ -260,14 +260,20 @@ const fileInput = document.getElementById('file-input');
 
 let uploadInFlight = false;
 
-uploadBlock.addEventListener('click', () => {
-  if (uploadInFlight) return;
-  fileInput.click();
-});
+if (uploadBlock && fileInput) {
+  uploadBlock.addEventListener('click', () => {
+    if (uploadInFlight || uploadBlock.hidden) return;
+    fileInput.click();
+  });
+}
 
 fileInput.addEventListener('change', async () => {
   const file = fileInput.files[0];
   if (!file) return;
+  if (!uploadBlock || uploadBlock.hidden) {
+    fileInput.value = '';
+    return;
+  }
 
   const uploadLabel = document.getElementById('upload-label');
   const uploadHint = document.getElementById('upload-hint');
@@ -879,4 +885,205 @@ fileInput.addEventListener('change', async () => {
 
   refreshRecentUi();
   fetchEpisodesTable();
+})();
+
+(function initSupabaseAuthUi() {
+  const cornerBtn = document.getElementById('auth-corner-btn');
+  const cornerLabel = document.getElementById('auth-corner-label');
+  const modal = document.getElementById('auth-modal');
+  const backdrop = document.getElementById('auth-modal-backdrop');
+  const closeBtn = document.getElementById('auth-modal-close');
+  const loggedInPane = document.getElementById('auth-modal-logged-in');
+  const guestPane = document.getElementById('auth-modal-guest');
+  const signedInEmail = document.getElementById('auth-signed-in-email');
+  const signOutBtn = document.getElementById('auth-sign-out-btn');
+  const tabLogin = document.getElementById('auth-tab-login');
+  const tabSignup = document.getElementById('auth-tab-signup');
+  const form = document.getElementById('auth-form');
+  const emailInput = document.getElementById('auth-email');
+  const passwordInput = document.getElementById('auth-password');
+  const msgEl = document.getElementById('auth-form-message');
+  const submitBtn = document.getElementById('auth-submit-btn');
+
+  if (!cornerBtn || !cornerLabel || !modal || !loggedInPane || !guestPane) return;
+
+  /** @type {ReturnType<typeof window.supabase.createClient> | null} */
+  let sbAuth = null;
+  /** @type {'login' | 'signup'} */
+  let authTab = 'login';
+
+  function getAuthClient() {
+    if (sbAuth) return sbAuth;
+    const { client, setupError } = createLilSebastianSupabase();
+    if (setupError || !client) return null;
+    sbAuth = client;
+    return sbAuth;
+  }
+
+  function clearAuthMessage() {
+    if (!msgEl) return;
+    msgEl.textContent = '';
+    msgEl.classList.remove('is-ok');
+  }
+
+  function setAuthMessage(text, ok) {
+    if (!msgEl) return;
+    msgEl.textContent = text || '';
+    msgEl.classList.toggle('is-ok', !!ok);
+  }
+
+  function updateCorner(session) {
+    const email = session?.user?.email;
+    if (email) {
+      cornerLabel.textContent = email;
+      cornerBtn.title = email + ' — account';
+      cornerBtn.disabled = false;
+      return;
+    }
+    cornerLabel.textContent = 'Login / signup';
+    cornerBtn.title = '';
+    const client = getAuthClient();
+    cornerBtn.disabled = !client;
+  }
+
+  function refreshUploadForSignedIn(signedIn) {
+    const row = document.getElementById('upload-city-row');
+    const block = document.getElementById('upload-block');
+    if (row) row.hidden = !signedIn;
+    if (block) block.hidden = !signedIn;
+  }
+
+  function applySessionUi(session) {
+    const inAccount = !!(session?.user);
+    loggedInPane.hidden = !inAccount;
+    guestPane.hidden = inAccount;
+    if (inAccount && session?.user?.email && signedInEmail) {
+      signedInEmail.textContent = session.user.email;
+    }
+    updateCorner(session);
+    refreshUploadForSignedIn(inAccount);
+  }
+
+  function syncModalToSession(after) {
+    const client = getAuthClient();
+    if (!client) {
+      loggedInPane.hidden = true;
+      guestPane.hidden = false;
+      refreshUploadForSignedIn(false);
+      setAuthMessage('Add supabaseUrl and supabaseAnonKey to config.js, then reload.', false);
+      if (typeof after === 'function') after();
+      return;
+    }
+    void client.auth.getSession().then(({ data: { session } }) => {
+      applySessionUi(session);
+      if (typeof after === 'function') after();
+    });
+  }
+
+  function openAuthModal() {
+    modal.hidden = false;
+    cornerBtn.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden';
+    clearAuthMessage();
+    syncModalToSession(() => {
+      if (!guestPane.hidden && emailInput) emailInput.focus();
+    });
+  }
+
+  function closeAuthModal() {
+    modal.hidden = true;
+    cornerBtn.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+    clearAuthMessage();
+  }
+
+  function setAuthTab(mode) {
+    authTab = mode;
+    if (tabLogin) {
+      tabLogin.classList.toggle('is-active', mode === 'login');
+      tabLogin.setAttribute('aria-selected', mode === 'login' ? 'true' : 'false');
+    }
+    if (tabSignup) {
+      tabSignup.classList.toggle('is-active', mode === 'signup');
+      tabSignup.setAttribute('aria-selected', mode === 'signup' ? 'true' : 'false');
+    }
+    if (submitBtn) submitBtn.textContent = mode === 'login' ? 'Log in' : 'Sign up';
+    if (passwordInput)
+      passwordInput.setAttribute('autocomplete', mode === 'login' ? 'current-password' : 'new-password');
+    clearAuthMessage();
+  }
+
+  setAuthTab('login');
+
+  const client0 = getAuthClient();
+  if (client0) {
+    void client0.auth.getSession().then(({ data: { session } }) => applySessionUi(session));
+    client0.auth.onAuthStateChange((_event, session) => applySessionUi(session));
+  } else {
+    cornerBtn.disabled = true;
+    cornerBtn.title = 'Configure config.js with Supabase URL and anon key';
+    refreshUploadForSignedIn(false);
+  }
+
+  cornerBtn.addEventListener('click', () => openAuthModal());
+  closeBtn?.addEventListener('click', () => closeAuthModal());
+  backdrop?.addEventListener('click', () => closeAuthModal());
+  modal.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') closeAuthModal();
+  });
+
+  tabLogin?.addEventListener('click', () => setAuthTab('login'));
+  tabSignup?.addEventListener('click', () => setAuthTab('signup'));
+
+  form?.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const client = getAuthClient();
+    if (!client || !submitBtn || !emailInput || !passwordInput) return;
+    const email = emailInput.value.trim();
+    const password = passwordInput.value;
+    clearAuthMessage();
+    submitBtn.disabled = true;
+
+    try {
+      if (authTab === 'login') {
+        const { error } = await client.auth.signInWithPassword({ email, password });
+        if (error) {
+          setAuthMessage(error.message, false);
+          return;
+        }
+        closeAuthModal();
+        return;
+      }
+
+      const { data, error } = await client.auth.signUp({ email, password });
+      if (error) {
+        setAuthMessage(error.message, false);
+        return;
+      }
+      if (data.session) {
+        closeAuthModal();
+      } else {
+        setAuthMessage(
+          'Check your email to confirm your account before signing in.',
+          true
+        );
+      }
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  signOutBtn?.addEventListener('click', async () => {
+    const client = getAuthClient();
+    if (!client || !signOutBtn) return;
+    signOutBtn.disabled = true;
+    try {
+      await client.auth.signOut();
+      setAuthTab('login');
+      if (passwordInput) passwordInput.value = '';
+      closeAuthModal();
+    } finally {
+      signOutBtn.disabled = false;
+    }
+  });
 })();

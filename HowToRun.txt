@@ -1,1 +1,11 @@
 python process_supabase_queue.py 
+
+I want to add something to the website in the website folder. I want a small box in the top right corner that says
+"login / signup". When you click that box, a popup comes up where users can login or sign up. We can use supabase for this. Keep track
+in the top right corner if the user is logged in or not. 
+
+Authentication → URL configuration (site URL) for your deployed site if you use email confirmation or redirects.
+
+Perfect! I want to show two different versions of the website. One version is if the user is signed out or hasn't signed in yet, then
+there is no "Upload Episode" button and no "Episode City" button. The other version, if the user is signed in, then these buttons will 
+be visible and usable. 
