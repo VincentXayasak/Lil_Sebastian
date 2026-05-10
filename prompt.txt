@@ -1,6 +1,4 @@
-Work on turning videos in the uploaded_videos folder into text by using eleven labs API. There
-will be videos that are over an hour long and I want to convert all of the speech to text. 
-The output I want is the transcript for each video in a JSONL file with the key being the name of the video
-and the value being the transcript, is this data structure a good idea or should I use a txt? Write out the files
-you created, what the files do, and how to run and test it in Vincents_Work.txt also.
-
+We have mp3s that are not that large and not that many and want an app for users to listen to them like a podcast.
+I want to use supabase for the user sign ups and managing them. I want to use supabase to store the mp3 files and have the 
+app play the mp3 files when the podcast is chosen on the app. Just help me with setting up the supabase and what to do on the 
+supabase website and how to test and run it. 
